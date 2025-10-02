@@ -11,7 +11,7 @@
 
 <nav>
 	<a href="/">Home</a>
-	<a href="/chat">Chat</a>
+	<a href="/camera">Caméra</a>
 </nav>
 
 {@render children?.()}
