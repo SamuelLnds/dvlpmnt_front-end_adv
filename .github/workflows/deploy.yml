@@ -20,10 +20,8 @@ jobs:
           port: ${{ secrets.VPS_PORT }}
           key: ${{ secrets.VPS_KEY }}
           script: |
-            set -e
             cd ${{ secrets.APP_DIR }}
-            git fetch --all
-            git reset --hard origin/main
+            git pull origin main
             npm ci --no-audit --no-fund
             npm run build
             pm2 start npm --name chat-client -- start || pm2 restart chat-client
