@@ -6,6 +6,12 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
+	<link rel="manifest" href="/manifest.webmanifest" />
 </svelte:head>
+
+<nav>
+	<a href="/">Home</a>
+	<a href="/chat">Chat</a>
+</nav>
 
 {@render children?.()}
