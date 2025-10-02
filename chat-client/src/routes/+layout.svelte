@@ -6,7 +6,7 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
-	<link rel="manifest" href="/manifest.webmanifest" />
+	<!-- <link rel="manifest" href="/manifest.webmanifest" /> -->
 </svelte:head>
 
 <nav>
