@@ -20,9 +20,32 @@ jobs:
           port: ${{ secrets.VPS_PORT }}
           key: ${{ secrets.VPS_KEY }}
           script: |
-            cd ${{ secrets.APP_DIR }}
-            git pull origin main
+            set -e
+
+            APP_DIR="${{ secrets.APP_DIR }}"
+            REPO_URL="https://github.com/SamuelLnds/dvlpmnt_front-end_adv.git"
+            BRANCH="main"
+
+            # 1) Créer le répertoire si absent
+            sudo mkdir -p "$APP_DIR"
+            sudo chown -R "$USER":"$USER" "$APP_DIR"
+
+            # 2) Clone initial si .git absent, sinon maj propre
+            if [ ! -d "$APP_DIR/.git" ]; then
+              git clone --branch "$BRANCH" --single-branch --depth 1 "$REPO_URL" "$APP_DIR"
+            else
+              cd "$APP_DIR"
+              # s'assurer que l'origin pointe vers le bon repo
+              git remote set-url origin "$REPO_URL"
+              # maj propre, sans merge
+              git fetch --depth 1 origin "$BRANCH"
+              git reset --hard "origin/$BRANCH"
+              # au besoin, nettoyer fichiers parasites
+              git clean -fdx
+            fi
+
+            cd "$APP_DIR"
+
+            # 3) Install + build (on garde dev deps pour le build)
             npm ci --no-audit --no-fund
             npm run build
-            pm2 start npm --name chat-client -- start || pm2 restart chat-client
-            pm2 save
