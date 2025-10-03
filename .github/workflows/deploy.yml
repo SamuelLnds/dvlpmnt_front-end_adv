@@ -1,19 +1,59 @@
-name: SSH Smoke
-on: workflow_dispatch
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [ main ]
+
 jobs:
-  ssh-smoke:
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: appleboy/ssh-action@v1.2.0
+      - name: Checkout (pour récupérer version/commit)
+        uses: actions/checkout@v4
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
         with:
-          host:     ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          port:     ${{ secrets.VPS_PORT }}
-          key:      ${{ secrets.VPS_KEY }}
-          debug:    true
-          command_timeout: 5m
+          host:       ${{ secrets.VPS_HOST }}
+          username:   ${{ secrets.VPS_USER }}
+          port:       ${{ secrets.VPS_PORT }}
+          key:        ${{ secrets.VPS_KEY }}
+          command_timeout: 15m
+          script_stop: true
           script: |
             set -eu
-            whoami
-            hostname
-            echo "OK"
+
+            APP_DIR="${{ secrets.APP_DIR }}"
+            REPO_URL="https://github.com/SamuelLnds/dvlpmnt_front-end_adv.git"
+            BRANCH="main"
+
+            # 1) Répertoire & droits
+            sudo mkdir -p "$APP_DIR"
+            sudo chown -R "$USER:$USER" "$APP_DIR"
+
+            # 2) Clone initial si besoin, sinon reset propre
+            if [ ! -d "$APP_DIR/.git" ]; then
+              git clone --branch "$BRANCH" --single-branch --depth 1 "$REPO_URL" "$APP_DIR"
+            else
+              cd "$APP_DIR"
+              git remote set-url origin "$REPO_URL"
+              git fetch --depth 1 origin "$BRANCH"
+              git reset --hard "origin/$BRANCH"
+              git clean -fdx
+            fi
+
+            cd "$APP_DIR"
+
+            # 3) Install + sync SvelteKit + build
+            npm ci --no-audit --no-fund
+            npx svelte-kit sync
+            npm run build
+
+            # 4) (Re)lancer PM2 sur le serveur Node généré (adapter-node)
+            HOST=127.0.0.1 PORT=40100 \
+            pm2 start "$APP_DIR/build/index.js" --name chat-client --update-env \
+              || HOST=127.0.0.1 PORT=40100 pm2 restart chat-client --update-env
+
+            pm2 save
+            echo "✅ Déployé: $(git -C "$APP_DIR" rev-parse --short HEAD)"
