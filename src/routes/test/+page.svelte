@@ -9,6 +9,7 @@
 		downloadPhoto
 	} from '$lib/storage/photos';
 	import type { PhotoItem } from '$lib/storage/photos';
+	import { notifyAndVibrate } from '$lib/device';
 
 	let videoEl: HTMLVideoElement | null = null;
 	let stream: MediaStream | null = null;
@@ -60,10 +61,9 @@
 		deleted: 'La photo a été supprimée.'
 	};
 	async function notify(kind: PhotoNotifyKind) {
-		if (!('Notification' in window)) return;
-		const perm =
-			Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
-		if (perm === 'granted') new Notification(TITLES[kind], { body: BODIES[kind] });
+		// vibration courte et reconnaissable
+		const pattern = kind === 'taken' ? [60, 20, 60] : 100;
+		await notifyAndVibrate(TITLES[kind], { body: BODIES[kind] }, pattern);
 	}
 
 	// --- capture + persistance via lib ---
@@ -123,10 +123,11 @@
 	<track kind="captions" src="" srclang="fr" default />
 </video>
 
-
 {#if photos.length}
 	<h2 class="captures-title">Dernière capture</h2>
-	<p>Tu peux aussi aller voir la page <a href="/gallery">Galerie</a> qui liste toutes les photos enregistrées.</p>
+	<p>
+		Tu peux aussi aller voir la page <a href="/gallery">Galerie</a> qui liste toutes les photos enregistrées.
+	</p>
 	<figure class="photo-item">
 		<img src={photos[0].dataUrl} alt="capture" class="photo-image" />
 		<figcaption class="photo-caption">

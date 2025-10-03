@@ -181,9 +181,9 @@
 	}
 	.log {
 		position: relative;
-        max-height: 70svh;
-        overflow: auto;
-	} 
+		max-height: 70svh;
+		overflow: auto;
+	}
 	.jump-to-bottom {
 		position: absolute;
 		right: 0.75rem;
