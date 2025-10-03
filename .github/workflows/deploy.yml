@@ -9,15 +9,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Smoke SSH (just echo)
+      - name: Deploy over SSH (minimal, no sudo)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}   # ici: root si tu te connectes en root
-          port: ${{ secrets.VPS_PORT }}       # 22 si c'est 22
-          key: ${{ secrets.VPS_KEY }}         # DOIT être la clé privée OpenSSH, telle quelle
+          username: ${{ secrets.VPS_USER }}
+          port: ${{ secrets.VPS_PORT }}
+          key: ${{ secrets.VPS_KEY }}
           script: |
-            whoami
-            uname -a
-            which sudo || echo "sudo not installed"
-            echo "ok from runner"
+            set -eu
+            APP_DIR="${{ secrets.APP_DIR }}"
+            REPO_URL="https://github.com/SamuelLnds/dvlpmnt_front-end_adv.git"
+            BRANCH="main"
+
+            mkdir -p "$APP_DIR"
+            chown -R "$USER:$USER" "$APP_DIR" || true
+
+            if [ ! -d "$APP_DIR/.git" ]; then
+                git clone --branch "$BRANCH" --single-branch --depth 1 "$REPO_URL" "$APP_DIR"
+            else
+                cd "$APP_DIR"
+                git remote set-url origin "$REPO_URL"
+                git fetch --depth 1 origin "$BRANCH"
+                git reset --hard "origin/$BRANCH"
+                git clean -fdx
+            fi
+
+            cd "$APP_DIR"
+            npm ci --no-audit --no-fund
+            npx svelte-kit sync
+            npm run build
+
+            HOST=127.0.0.1 PORT=40100 \
+            pm2 start "$APP_DIR/build/index.js" --name chat-client --update-env \
+                || HOST=127.0.0.1 PORT=40100 pm2 restart chat-client --update-env
+
+            pm2 save
+            echo "✅ Déployé: $(git -C "$APP_DIR" rev-parse --short HEAD)"
