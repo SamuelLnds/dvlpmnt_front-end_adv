@@ -21,9 +21,6 @@ jobs:
           key:      ${{ secrets.VPS_KEY }}
           script_stop: true
           script: |
-            # Merci chatGPT je suis perdu
-            set -Eeuo pipefail
-
             APP_DIR="${{ secrets.APP_DIR }}"
             REPO_URL="https://github.com/SamuelLnds/dvlpmnt_front-end_adv.git"
             BRANCH="main"
