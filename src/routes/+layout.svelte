@@ -11,7 +11,8 @@
 
 <nav>
 	<a href="/">Home</a>
-	<a href="/camera">Caméra</a>
+	<a href="/test">Test</a>
+	<a href="/gallery">Galerie</a> 
 </nav>
 
 {@render children?.()}
