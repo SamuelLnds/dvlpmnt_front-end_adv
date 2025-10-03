@@ -1,0 +1,1 @@
+<!-- page de connexion avec pseudo + photo + liste de rooms disponibles -->

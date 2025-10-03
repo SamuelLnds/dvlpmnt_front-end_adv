@@ -1,0 +1,1 @@
+<!-- salle de tchat avec historique de conversation. -->
