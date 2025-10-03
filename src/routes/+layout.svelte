@@ -13,6 +13,7 @@
 	<a href="/">Home</a>
 	<a href="/test">Test</a>
 	<a href="/gallery">Galerie</a> 
+	<a href="/reception">Réception</a>
 </nav>
 
 {@render children?.()}
