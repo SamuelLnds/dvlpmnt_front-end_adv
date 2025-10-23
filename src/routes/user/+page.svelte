@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import {
 		readProfile,
 		writeProfile,
@@ -9,35 +9,28 @@
 		LAST_ROOM_KEY,
 		defaultAvatarDataURL
 	} from '$lib/storage/profile';
-	import {
-		addPhotoFromDataURL,
-		dataURLFromBlob,
-		readPhotos,
-		type PhotoItem
-	} from '$lib/storage/photos';
+	import { addPhotoFromDataURL, readPhotos, type PhotoItem } from '$lib/storage/photos';
 	import { resetSocket } from '$lib/socket';
+	import CameraCapture from '$lib/components/CameraCapture.svelte';
 
 	let profile: Profile = { pseudo: '' };
 	let saved = '';
 
 	// Caméra
-	let videoEl: HTMLVideoElement | null = null;
-	let stream: MediaStream | null = null;
-	let showCamera = false;
-	let canCapture = false;
+	let avatarCam: InstanceType<typeof CameraCapture> | null = null;
 
-	// Galerie
+	// Galerie locale
 	let photos: PhotoItem[] = [];
 	let showGallery = false;
 
-	// Pdp
+	// État avatar
 	let isDefaultAvatar = false;
 
 	onMount(() => {
 		profile = readProfile();
 		photos = readPhotos();
 
-		// Si pas d'avatar, utiliser l'avatar par défaut
+		// Avatar par défaut si absent
 		if (!profile.photoDataUrl) {
 			defaultAvatarDataURL().then((dataUrl) => {
 				profile.photoDataUrl = dataUrl;
@@ -46,8 +39,6 @@
 		}
 	});
 
-	onDestroy(() => stopCamera());
-
 	async function onAvatarFile(e: Event) {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
@@ -55,6 +46,8 @@
 		profile.photoDataUrl = await fileToDataURL(file);
 		isDefaultAvatar = false;
 		saved = '';
+		addPhotoFromDataURL(profile.photoDataUrl);
+		photos = readPhotos();
 	}
 
 	async function resetAvatar() {
@@ -63,81 +56,7 @@
 		saved = '';
 	}
 
-	async function startCamera() {
-		if (stream) return;
-		try {
-			showCamera = true;
-			await tick(); // on patiente pour bind videoEl
-
-			stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-			if (videoEl) {
-				videoEl.muted = true; // évite blocage d'autoplay
-				videoEl.srcObject = stream;
-
-				// attendre que la vidéo ait des dimensions
-				await new Promise<void>((resolve) => {
-					const onReady = () => {
-						canCapture = !!videoEl?.videoWidth;
-						videoEl?.removeEventListener('loadedmetadata', onReady);
-						videoEl?.removeEventListener('canplay', onReady);
-						resolve();
-					};
-
-					if (!videoEl) {
-						resolve(); // permet d'éviter videoEl null
-						return;
-					}
-
-					videoEl.addEventListener('loadedmetadata', onReady, { once: true });
-					videoEl.addEventListener('canplay', onReady, { once: true });
-				});
-
-				await videoEl.play().catch(() => {});
-			}
-			showCamera = true;
-		} catch (e) {
-			alert('Caméra indisponible : ' + (e as Error).message);
-			showCamera = false;
-			stopCamera();
-		}
-	}
-
-	function stopCamera() {
-		stream?.getTracks().forEach((t) => t.stop());
-		stream = null;
-		if (videoEl) videoEl.srcObject = null;
-		canCapture = false;
-		showCamera = false;
-	}
-
-	async function takePhoto() {
-		if (!videoEl || !canCapture) {
-			alert('La vidéo n’est pas prête — réessaie dans 1 seconde');
-			return;
-		}
-		// canvas pour capture
-		const canvas = document.createElement('canvas');
-		canvas.width = videoEl.videoWidth;
-		canvas.height = videoEl.videoHeight;
-		const ctx = canvas.getContext('2d')!;
-		ctx.drawImage(videoEl, 0, 0);
-
-		// canvas -> blob pour dataURL
-		const blob: Blob | null = await new Promise((resolve) =>
-			canvas.toBlob(resolve, 'image/jpeg', 0.85)
-		);
-		if (!blob) return;
-		const dataUrl = await dataURLFromBlob(blob);
-		addPhotoFromDataURL(dataUrl); // ajout à la galerie
-
-		// màj pdp avec dataURL
-		profile.photoDataUrl = dataUrl;
-		isDefaultAvatar = false;
-		saved = '';
-		stopCamera();
-	}
-
-	// --- galerie ---
+	// Choix depuis galerie
 	function pickFromGallery(p: PhotoItem) {
 		profile.photoDataUrl = p.dataUrl;
 		isDefaultAvatar = false;
@@ -153,9 +72,9 @@
 			saved = 'Le pseudo est requis';
 			return;
 		}
-
 		if (!profile.photoDataUrl) {
 			profile.photoDataUrl = await defaultAvatarDataURL();
+			isDefaultAvatar = true;
 		}
 
 		writeProfile(profile);
@@ -198,12 +117,8 @@
 					Galerie
 				</button>
 
-				<button
-					type="button"
-					class="btn"
-					on:click={() => (showCamera ? stopCamera() : startCamera())}
-				>
-					{showCamera ? 'Fermer caméra' : 'Prendre une photo'}
+				<button type="button" class="btn" on:click={() => avatarCam?.open()}>
+					Prendre une photo
 				</button>
 			</div>
 
@@ -219,28 +134,25 @@
 			</div>
 		</fieldset>
 
-		{#if showCamera}
-			<div class="camera">
-				<video bind:this={videoEl} playsinline autoplay>
-					<track kind="captions" />
-				</video>
-				<div class="row">
-					<button
-						type="button"
-						class="btn"
-						on:click={takePhoto}
-						disabled={!showCamera || !canCapture}
-					>
-						Capturer
-					</button>
-				</div>
-			</div>
-		{/if}
+		<CameraCapture
+			bind:this={avatarCam}
+			facingMode="user"
+			mirror={true}
+			on:captured={(e) => {
+				profile.photoDataUrl = e.detail;
+				isDefaultAvatar = false;
+				saved = '';
+				addPhotoFromDataURL(e.detail);
+				photos = readPhotos();
+			}}
+		/>
 
 		{#if showGallery}
 			<div class="gallery">
 				{#if photos.length === 0}
-					<p class="muted">Aucune photo enregistrée dans la galerie.</p>
+					<p class="muted">
+						Aucune photo enregistrée dans la galerie.
+					</p>
 				{:else}
 					<ul class="grid">
 						{#each photos as p (p.ts)}
@@ -300,9 +212,7 @@
 		border: 1px solid #ddd;
 		background: #f9f9f9;
 		border-radius: 0.5rem;
-		&:not(:disabled) {
-			cursor: pointer;
-		}
+		cursor: pointer;
 	}
 	.btn.primary {
 		background: #111827;
@@ -342,17 +252,7 @@
 		color: #777;
 	}
 
-	.camera {
-		display: grid;
-		gap: 0.5rem;
-	}
-	.camera video {
-		width: 240px;
-		max-width: 100%;
-		border-radius: 0.5rem;
-		background: #000;
-	}
-
+	/* Galerie */
 	.gallery {
 		border-top: 1px solid #f3f4f6;
 		padding-top: 0.5rem;
