@@ -9,6 +9,7 @@
 		type Profile
 	} from '$lib/storage/profile';
 	import { ensureSeed, upsertRoom, type Room } from '$lib/storage/rooms';
+	import { resetSocket } from '$lib/socket';
 
 	let profile: Profile = { pseudo: '' };
 	let rooms: Room[] = [];
@@ -42,6 +43,7 @@
 		ensurePseudo(); // au cas où l’état aurait été reset
 		rooms = upsertRoom(roomId, name);
 		writeLastRoom(roomId);
+		resetSocket(); // éviter les problèmes de connexion bloquée à cause d'un ancien socket
 		await goto(`/room/${encodeURIComponent(roomId)}`);
 	}
 

@@ -5,8 +5,9 @@
 	type PageData = OriginalPageData & {
 		roomId: string;
 	};
-	import { getSocket, withSocket } from '$lib/socket';
+	import { getSocket, resetSocket, withSocket } from '$lib/socket';
 	import { readProfile } from '$lib/storage/profile';
+	import { notifyAndVibrate } from '$lib/device';
 
 	export let data: PageData;
 	const roomId = data.roomId;
@@ -23,15 +24,28 @@
 	let status: 'connecting' | 'connected' | 'reconnecting' | 'disconnected' = 'connecting';
 	let messages: ChatMsg[] = [];
 	let text = '';
+	let joinedAt = 0;
+	let username = '';
 
 	onMount(() => {
 		const { pseudo } = readProfile();
 
+		resetSocket(); // s'assurer qu'on part d'un socket clean
+
 		const s = withSocket((socket) => {
-			// branchement des handlers
+			// logging erreurs
+			socket.on('connect_error', (e: any) => {
+				console.warn('connect_error:', e?.message ?? e);
+			});
+
+			socket.on('error', (msg: any) => {
+				console.warn('server error:', msg);
+			});
+
 			socket.on('connect', () => {
 				status = 'connected';
-				// on rejoint la room à la connexion
+				joinedAt = Date.now();
+				username = pseudo.trim().toLowerCase();
 				socket.emit('chat-join-room', { pseudo, roomName: roomId });
 			});
 
@@ -49,10 +63,24 @@
 			// réception d'un message serveur
 			socket.on('chat-msg', (msg: ChatMsg) => {
 				messages = [...messages, msg];
+
+				// pas de notif pour les messages d'info
+				if (msg.categorie === 'INFO') return;
+
+				// pas de notif pour ses propres messages
+				if ((msg.pseudo ?? 'client').trim().toLowerCase() === username) return;
+
+				// pas de notif pour l'historique
+				const msgDate = msg.dateEmis ? new Date(msg.dateEmis).getTime() : Date.now();
+				if (msgDate < joinedAt) return;
+
+				// la notification est tronquée si trop longue
+				const body = msg.content.length > 100 ? msg.content.slice(0, 100) + '…' : msg.content;
+				notifyAndVibrate(`Nouveau message de ${msg.pseudo ?? 'client'}`, { body }, [100, 30, 150]);
 			});
 
 			// connexion
-			if (!socket.connected) socket.connect();
+			if (socket.disconnected) socket.connect();
 
 			// on descend en bas à l'arrivée
 			scrollToBottom(false);
@@ -61,10 +89,8 @@
 
 		onDestroy(() => {
 			const s2 = getSocket();
-			s2.off('connect');
-			s2.off('disconnect');
-			s2.off('error');
-			s2.off('chat-msg');
+			s2.removeAllListeners();
+			s2.disconnect();
 		});
 	});
 
@@ -133,18 +159,19 @@
 			<div bind:this={endEl} aria-hidden="true"></div>
 		{/if}
 
-		<!-- Bouton flottant pour aller au dernier message -->
-		{#if showJump}
-			<button
-				class="jump-to-bottom"
-				type="button"
-				aria-label="Aller au message le plus récent"
-				on:click={() => scrollToBottom(true)}
-			>
-				⬇ Dernier
-			</button>
-		{/if}
 	</section>
+
+	<!-- Bouton flottant pour aller au dernier message -->
+	{#if showJump}
+		<button
+			class="jump-to-bottom"
+			type="button"
+			aria-label="Aller au message le plus récent"
+			on:click={() => scrollToBottom(true)}
+		>
+			⬇ Dernier
+		</button>
+	{/if}
 
 	<form class="composer" on:submit={send}>
 		<input name="text" bind:value={text} placeholder="Votre message…" autocomplete="off" />
@@ -153,8 +180,10 @@
 </main>
 
 <style>
+
 	.wrap {
-		max-width: 800px;
+		position: relative;
+		max-width: 1200px;
 		margin: 0 auto;
 		padding: 1rem;
 		display: grid;
@@ -182,12 +211,14 @@
 	.log {
 		position: relative;
 		max-height: 70svh;
-		overflow: auto;
+		max-width: 100%;
+		overflow-y: auto;
+		overflow-x: hidden;
 	}
 	.jump-to-bottom {
 		position: absolute;
-		right: 0.75rem;
-		bottom: 0.75rem;
+		right: 1rem;
+		bottom: 4rem;
 		padding: 0.4rem 0.6rem;
 		border: 1px solid #ddd;
 		border-radius: 0.5rem;
@@ -205,6 +236,8 @@
 	.msg {
 		border-bottom: 1px solid #f2f2f2;
 		padding: 0.5rem 0;
+		width: 100%;
+		text-wrap: wrap;
 	}
 	.msg:last-child {
 		border-bottom: none;
@@ -217,6 +250,7 @@
 	}
 	.text {
 		margin: 0.25rem 0;
+		word-wrap: break-word;
 	}
 	.composer {
 		display: grid;

@@ -26,3 +26,16 @@ export function withSocket(onReady: (s: Socket) => void, onError?: (e: unknown) 
 	}
 	return s;
 }
+
+export function resetSocket() {
+  if (!socket) return;
+  try {
+    socket.removeAllListeners();
+	if (socket.io) {
+		socket.io.opts.autoConnect = false;
+	}
+    socket.disconnect();
+  } finally {
+    socket = null;
+  }
+}
