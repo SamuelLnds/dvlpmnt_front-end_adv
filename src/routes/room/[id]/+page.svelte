@@ -29,19 +29,9 @@
 
 	onMount(() => {
 		const { pseudo } = readProfile();
-
 		resetSocket(); // s'assurer qu'on part d'un socket clean
 
 		const s = withSocket((socket) => {
-			// logging erreurs
-			socket.on('connect_error', (e: any) => {
-				console.warn('connect_error:', e?.message ?? e);
-			});
-
-			socket.on('error', (msg: any) => {
-				console.warn('server error:', msg);
-			});
-
 			socket.on('connect', () => {
 				status = 'connected';
 				joinedAt = Date.now();

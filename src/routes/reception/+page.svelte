@@ -3,47 +3,30 @@
 	import { onMount } from 'svelte';
 	import {
 		readProfile,
-		writeProfile,
 		readLastRoom,
 		writeLastRoom,
-		type Profile
 	} from '$lib/storage/profile';
 	import { ensureSeed, upsertRoom, type Room } from '$lib/storage/rooms';
-	import { resetSocket } from '$lib/socket';
 
-	let profile: Profile = { pseudo: '' };
+	let userPseudo = '';
+	let roomName = '';
 	let rooms: Room[] = [];
 	let customRoom = '';
 	let lastRoom = '';
 
-	function ensurePseudo() {
-		while (true) {
-			const current = (profile.pseudo ?? '').trim();
-			if (current) break;
-			const v = window.prompt('Entrez votre pseudo (requis) :') ?? '';
-			const pseudo = v.trim();
-			if (pseudo) {
-				profile.pseudo = pseudo;
-				writeProfile({ pseudo });
-				break;
-			}
-		}
-	}
-
 	onMount(() => {
+		const p = readProfile();
+		userPseudo = p.pseudo;
 		rooms = ensureSeed();
-		profile = readProfile();
-		ensurePseudo(); // ⇦ pseudo forcément renseigné à l’entrée sur /reception
-		lastRoom = readLastRoom() || 'general';
+		roomName = readLastRoom() || 'general';
+		lastRoom = roomName;
 	});
 
 	async function joinRoom(id: string, name?: string) {
 		const roomId = (id ?? '').trim();
 		if (!roomId) return;
-		ensurePseudo(); // au cas où l’état aurait été reset
 		rooms = upsertRoom(roomId, name);
 		writeLastRoom(roomId);
-		resetSocket(); // éviter les problèmes de connexion bloquée à cause d'un ancien socket
 		await goto(`/room/${encodeURIComponent(roomId)}`);
 	}
 
@@ -61,7 +44,7 @@
 	<h1>Réception</h1>
 
 	<section class="card">
-		<p class="hello">Bonjour <strong>{profile.pseudo}</strong> 👋</p>
+		<p class="hello">Bonjour <strong>{userPseudo}</strong> 👋</p>
 
 		<h2 class="h2">Rooms disponibles</h2>
 		{#if rooms.length === 0}

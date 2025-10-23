@@ -1,8 +1,17 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import favicon from '$lib/assets/favicon.svg';
 	import Battery from '$lib/components/Battery.svelte';
+	import { readProfile } from '$lib/storage/profile';
 
 	let { children } = $props();
+	let isSignedIn = $state(false);
+	
+	onMount(() => {
+		const p = readProfile();
+		isSignedIn = !!p.pseudo;
+	});
+
 </script>
 
 <svelte:head>
@@ -11,10 +20,13 @@
 </svelte:head>
 
 <nav>
-	<a href="/">Home</a>
-	<a href="/test">Test</a>
-	<a href="/gallery">Galerie</a>
-	<a href="/reception">Réception</a>
+	{#if isSignedIn}
+		<a href="/">Home</a>
+		<a href="/test">Test</a>
+		<a href="/gallery">Galerie</a>
+		<a href="/reception">Réception</a>
+		<a href="/user">Profil</a>
+	{/if}
 	<Battery />
 </nav>
 
@@ -25,7 +37,7 @@
 		display: flex;
 		gap: 1rem;
 		align-items: center;
-		justify-content: space-between;
+		justify-content: space-around;
 		padding: 0.5rem 0;
 
 		& a {
