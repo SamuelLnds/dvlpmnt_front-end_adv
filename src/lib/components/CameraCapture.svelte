@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { addPhotoFromDataURL } from '$lib/storage/photos';
 	import { createEventDispatcher, onDestroy, tick } from 'svelte';
 
 	export let quality = 0.85; // JPEG quality
@@ -87,6 +88,7 @@
 		ctx.drawImage(videoEl, 0, 0);
 
 		snapshot = canvas.toDataURL('image/jpeg', quality);
+        addPhotoFromDataURL(snapshot); // ajout à la galerie
 		stream?.getTracks().forEach((t) => t.stop());
 		stream = null;
 		if (videoEl) videoEl.srcObject = null;
