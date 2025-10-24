@@ -5,7 +5,9 @@
 	type PageData = OriginalPageData & { roomId: string };
 
 	import { getSocket, resetSocket, withSocket } from '$lib/socket';
-	import { readProfile } from '$lib/storage/profile';
+	import { readProfile, defaultAvatarDataURL } from '$lib/storage/profile';
+	import { fetchUserImage, uploadUserImage } from '$lib/api/images';
+	import defaultAvatarUrl from '$lib/assets/default-avatar.png';
 	import { notifyAndVibrate } from '$lib/device';
 	import { readPhotos, addPhotoFromDataURL, type PhotoItem } from '$lib/storage/photos';
 
@@ -19,9 +21,14 @@
 		content: string;
 		dateEmis?: string;
 		roomName?: string;
-		categorie?: 'MESSAGE' | 'INFO';
+		categorie?: 'MESSAGE' | 'INFO' | 'NEW_IMAGE';
 		serverId?: string;
 		pseudo?: string;
+		id?: string;
+		socketId?: string;
+		clientId?: string;
+		avatarDataUrl?: string;
+		senderId?: string;
 	};
 
 	type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
@@ -30,12 +37,184 @@
 	let text = '';
 	let joinedAt = 0;
 	let username = '';
+	let pseudoToSocketId: Record<string, string> = {};
+	let clientAvatarKey: Record<string, string> = {};
+	let avatarByKey: Record<string, string> = {};
+	const pendingAvatarFetch = new Set<string>();
+	let defaultAvatar = '';
+	const defaultAvatarFallback = defaultAvatarUrl;
+	let profilePhotoDataUrl: string | null = null;
+	let mySocketId = '';
+	let lastSyncedAvatarKey: string | null = null;
+
+	function normalizePseudo(value?: string | null): string | undefined {
+		const trimmed = (value ?? '').trim();
+		return trimmed ? trimmed.toLowerCase() : undefined;
+	}
+
+	function remoteImageKey(socketId?: string | null, pseudoRaw?: string | null): string | undefined {
+		const pseudoKey = normalizePseudo(pseudoRaw);
+		if (pseudoKey) return `pseudo:${pseudoKey}`;
+		if (socketId) return `socket:${socketId}`;
+		return undefined;
+	}
+
+	function resolveSenderId(raw: Partial<ChatMsg>): string | undefined {
+		if (!raw) return undefined;
+		if (typeof raw.senderId === 'string') return raw.senderId;
+		if (typeof raw.id === 'string') return raw.id;
+		if (typeof raw.socketId === 'string') return raw.socketId;
+		if (typeof raw.clientId === 'string') return raw.clientId;
+		const pseudoKey = normalizePseudo(raw.pseudo);
+		if (pseudoKey && pseudoKey in pseudoToSocketId) {
+			return pseudoToSocketId[pseudoKey];
+		}
+		return undefined;
+	}
+
+	async function ensureDefaultAvatar(): Promise<string> {
+		if (defaultAvatar) return defaultAvatar;
+		try {
+			defaultAvatar = await defaultAvatarDataURL();
+		} catch (error) {
+			console.warn('ensureDefaultAvatar: failed to load default avatar', error);
+			defaultAvatar = '';
+		}
+		return defaultAvatar;
+	}
+
+	async function resolveProfilePhoto(): Promise<string | null> {
+		if (profilePhotoDataUrl) return profilePhotoDataUrl;
+		const fallback = await ensureDefaultAvatar();
+		if (fallback) {
+			profilePhotoDataUrl = fallback;
+		}
+		return profilePhotoDataUrl;
+	}
+
+	function resolveAvatarKey(msg: Partial<ChatMsg>): string | undefined {
+		const pseudoKey = remoteImageKey(undefined, msg.pseudo);
+		if (pseudoKey) return pseudoKey;
+
+		const senderId = msg.senderId ?? resolveSenderId(msg);
+		if (!senderId) return undefined;
+
+		const mapped = clientAvatarKey[senderId];
+		if (mapped) return mapped;
+		return remoteImageKey(senderId, undefined);
+	}
+
+	function refreshMessageAvatars(): void {
+		messages = messages.map((msg) => {
+			const nextSenderId = resolveSenderId(msg) ?? msg.senderId;
+			const avatarKey = resolveAvatarKey({ ...msg, senderId: nextSenderId });
+			const avatar = avatarKey ? avatarByKey[avatarKey] : msg.avatarDataUrl;
+			if (nextSenderId === msg.senderId && avatar === msg.avatarDataUrl) {
+				return msg;
+			}
+			return {
+				...msg,
+				senderId: nextSenderId ?? msg.senderId,
+				avatarDataUrl: avatar ?? msg.avatarDataUrl
+			};
+		});
+	}
+
+	async function ensureAvatarForKey(key: string | undefined, force = false) {
+		if (!key) return;
+		if (avatarByKey[key] && !force) {
+			refreshMessageAvatars();
+			return;
+		}
+		if (pendingAvatarFetch.has(key)) {
+			if (!force) return;
+		}
+		pendingAvatarFetch.add(key);
+		try {
+			const image = await fetchUserImage(key);
+			if (!image) return;
+			avatarByKey = { ...avatarByKey, [key]: image };
+			refreshMessageAvatars();
+		} finally {
+			pendingAvatarFetch.delete(key);
+		}
+	}
+
+	function indexClients(serverClients: unknown) {
+		const next: Record<string, string> = {};
+		if (serverClients && typeof serverClients === 'object') {
+			for (const [id, data] of Object.entries(serverClients as Record<string, unknown>)) {
+				if (typeof id !== 'string') continue;
+				const pseudoRaw =
+					typeof (data as { pseudo?: unknown })?.pseudo === 'string'
+						? (data as { pseudo: string }).pseudo
+						: undefined;
+				const pseudoKey = normalizePseudo(pseudoRaw);
+				if (!pseudoKey) continue;
+				if (!(pseudoKey in next)) {
+					next[pseudoKey] = id;
+				}
+				const remoteKey = remoteImageKey(id, pseudoRaw);
+				if (remoteKey) {
+					clientAvatarKey = { ...clientAvatarKey, [id]: remoteKey };
+					void ensureAvatarForKey(remoteKey);
+				}
+			}
+		}
+		pseudoToSocketId = next;
+		refreshMessageAvatars();
+	}
+
+	function dropClient(id: string | undefined, pseudo: string | undefined) {
+		if (id && clientAvatarKey[id]) {
+			const next = { ...clientAvatarKey };
+			delete next[id];
+			clientAvatarKey = next;
+		}
+		const pseudoKey = normalizePseudo(pseudo);
+		if (pseudoKey && pseudoToSocketId[pseudoKey] === id) {
+			const next = { ...pseudoToSocketId };
+			delete next[pseudoKey];
+			pseudoToSocketId = next;
+		}
+		refreshMessageAvatars();
+	}
+
+	async function syncProfileAvatar(id: string | undefined, pseudo: string | undefined) {
+		const remoteKey = remoteImageKey(id, pseudo);
+		if (!remoteKey) return;
+		if (lastSyncedAvatarKey === remoteKey) return;
+		const photo = await resolveProfilePhoto();
+		if (!photo) return;
+		const success = await uploadUserImage(remoteKey, photo);
+		if (success) {
+			lastSyncedAvatarKey = remoteKey;
+			if (id) {
+				clientAvatarKey = { ...clientAvatarKey, [id]: remoteKey };
+			}
+			avatarByKey = { ...avatarByKey, [remoteKey]: photo };
+			refreshMessageAvatars();
+		}
+	}
+
+	function avatarSrcFor(msg: ChatMsg): string {
+		const avatarKey = resolveAvatarKey(msg);
+		if (avatarKey && avatarByKey[avatarKey]) {
+			return avatarByKey[avatarKey];
+		}
+
+		if (normalizePseudo(msg.pseudo) === username) {
+			return (profilePhotoDataUrl ?? defaultAvatar) || defaultAvatarFallback;
+		}
+
+		return defaultAvatar || defaultAvatarFallback;
+	}
 
 	const statusLabels: Record<ConnectionStatus, string> = {
-		connecting: 'Connexion…',
+		connecting: 'Connexion...',
 		connected: 'Connecté',
-		reconnecting: 'Reconnexion…',
-		disconnected: 'Déconnecté',
+		reconnecting: 'Reconnexion...',
+		disconnected: 'Deconnecté',
 	};
 
 	$: statusText = statusLabels[status];
@@ -109,16 +288,38 @@
 	}
 
 	onMount(() => {
-		const { pseudo } = readProfile();
+		const profile = readProfile();
+		const pseudo = profile.pseudo;
+		profilePhotoDataUrl = profile.photoDataUrl ?? null;
 		photos = readPhotos();
 
+		void ensureDefaultAvatar();
+
 		resetSocket();
+		messages = [];
+		pseudoToSocketId = {};
+		clientAvatarKey = {};
+		avatarByKey = {};
+		pendingAvatarFetch.clear();
+		mySocketId = '';
+		lastSyncedAvatarKey = null;
 
 		withSocket((socket) => {
-			socket.on('connect', () => {
+			socket.on('connect', async () => {
 				status = 'connected';
 				joinedAt = Date.now();
-				username = pseudo.trim().toLowerCase();
+				username = normalizePseudo(pseudo) ?? '';
+				mySocketId = socket.id ?? '';
+				const pseudoKey = normalizePseudo(pseudo);
+				if (pseudoKey && mySocketId) {
+					pseudoToSocketId = { ...pseudoToSocketId, [pseudoKey]: mySocketId };
+				}
+				const myRemoteKey = remoteImageKey(mySocketId, pseudo);
+				if (myRemoteKey && mySocketId) {
+					clientAvatarKey = { ...clientAvatarKey, [mySocketId]: myRemoteKey };
+				}
+				await syncProfileAvatar(mySocketId, pseudo);
+				void ensureAvatarForKey(myRemoteKey);
 				socket.emit('chat-join-room', { pseudo, roomName: roomId });
 			});
 
@@ -134,27 +335,66 @@
 				console.error('Server error:', message);
 			});
 
-			socket.on('chat-msg', (msg: ChatMsg) => {
-				messages = [...messages, msg];
+			socket.on(
+				'chat-joined-room',
+				(payload: { clients?: Record<string, { pseudo?: string }> }) => {
+					indexClients(payload?.clients);
+				}
+			);
 
-				// si info ou message du user connecté alors pas notif
-				if (msg.categorie === 'INFO') return;
-				if ((msg.pseudo ?? 'client').trim().toLowerCase() === username) return;
-
-				// si message avant la connexion, pas de notif
-				const emissionTs = msg.dateEmis ? Date.parse(msg.dateEmis) : Date.now();
-				if (emissionTs < joinedAt) return;
-
-				// notif tronquée si trop longue ou image
-				const body = isImageDataUrl(msg.content)
-					? '[Image]'
-					: msg.content.length > 100
-					? `${msg.content.slice(0, 100)}…`
-					: msg.content;
-
-				notifyAndVibrate(`Nouveau message de ${msg.pseudo ?? 'client'}`, { body }, [100, 30, 150]);
+			socket.on('chat-disconnected', (payload: { id?: string; pseudo?: string }) => {
+				dropClient(payload?.id, payload?.pseudo);
 			});
 
+			socket.on('chat-msg', (raw: ChatMsg) => {
+				const senderId = resolveSenderId(raw);
+				const pseudoKey = normalizePseudo(raw.pseudo);
+				if (senderId && pseudoKey && pseudoToSocketId[pseudoKey] !== senderId) {
+					pseudoToSocketId = { ...pseudoToSocketId, [pseudoKey]: senderId };
+				}
+				const remoteKey = remoteImageKey(senderId, raw.pseudo);
+				if (senderId && remoteKey) {
+					clientAvatarKey = { ...clientAvatarKey, [senderId]: remoteKey };
+				}
+				if (remoteKey) {
+					void ensureAvatarForKey(remoteKey, raw.categorie === 'NEW_IMAGE');
+				}
+
+				const avatar = remoteKey ? avatarByKey[remoteKey] : raw.avatarDataUrl;
+				const next: ChatMsg = {
+					...raw,
+					senderId: senderId ?? raw.senderId,
+					avatarDataUrl: avatar ?? raw.avatarDataUrl
+				};
+				const shouldStick = isNearBottom();
+				messages = [...messages, next];
+
+				if (shouldStick) {
+					tick().then(() => {
+						scrollToBottom(true);
+						updateJumpButton();
+					});
+				} else {
+					updateJumpButton();
+				}
+
+				// si info ou message du user connecte alors pas notif
+				if (raw.categorie === 'INFO') return;
+				if (normalizePseudo(raw.pseudo) === username) return;
+
+				// si message avant la connexion, pas de notif
+				const emissionTs = raw.dateEmis ? Date.parse(raw.dateEmis) : Date.now();
+				if (emissionTs < joinedAt) return;
+
+				// notif tronquee si trop longue ou image
+				const body = isImageDataUrl(raw.content)
+					? '[Image]'
+					: raw.content.length > 100
+						? `${raw.content.slice(0, 97)}...`
+						: raw.content;
+
+				notifyAndVibrate(`Nouveau message de ${raw.pseudo ?? 'client'}`, { body }, [100, 30, 150]);
+			});
 			if (socket.disconnected) {
 				socket.connect();
 			}
@@ -202,13 +442,6 @@
 		showJump = !isNearBottom();
 	}
 
-	$: (async () => {
-		if (isNearBottom()) {
-			await tick();
-			scrollToBottom(true);
-		}
-		updateJumpButton();
-	})();
 </script>
 
 <svelte:head><title>Room #{data.roomId}</title></svelte:head>
@@ -236,6 +469,13 @@
 			{#each messages as message}
 				<article class="chat-message" data-category={message.categorie ?? 'MESSAGE'}>
 					<header class="chat-message__meta">
+						<img
+							class="chat-message__avatar"
+							src={avatarSrcFor(message)}
+							alt={`Avatar de ${message.pseudo ?? 'client'}`}
+							loading="lazy"
+							decoding="async"
+						/>
 						<strong class="chat-message__author">{message.pseudo ?? 'client'}</strong>
 						<time class="chat-message__time">
 							{message.dateEmis ? new Date(message.dateEmis).toLocaleTimeString() : ''}
@@ -281,7 +521,7 @@
 				name="text"
 				class="input"
 				bind:value={text}
-				placeholder="Votre message…"
+				placeholder="Votre message"
 				autocomplete="off"
 			/>
 		</label>
@@ -323,7 +563,7 @@
 						<input type="file" accept="image/*" on:change={onPickFile} />
 						{#if selectedDataUrl}
 							<div class="chat-picker__preview">
-								<img src={selectedDataUrl} alt="Aperçu import" />
+								<img src={selectedDataUrl} alt="AperÃ§u import" />
 							</div>
 						{/if}
 					</div>
@@ -461,6 +701,16 @@
 		color: var(--color-text-muted);
 	}
 
+	.chat-message__avatar {
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		object-fit: cover;
+		border: 1px solid var(--color-border);
+		flex-shrink: 0;
+		background: var(--color-bg-muted);
+	}
+
 	.chat-message__author {
 		color: var(--color-text);
 		font-size: 0.95rem;
@@ -577,3 +827,4 @@
 		}
 	}
 </style>
+

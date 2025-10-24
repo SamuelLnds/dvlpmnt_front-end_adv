@@ -1,24 +1,30 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import {
-		readProfile,
-		readLastRoom,
-		writeLastRoom,
-	} from '$lib/storage/profile';
+	import { readProfile, readLastRoom, writeLastRoom } from '$lib/storage/profile';
 	import { ensureSeed, upsertRoom, type Room } from '$lib/storage/rooms';
 
 	let userPseudo = '';
 	let rooms: Room[] = [];
+	let roomsLoading = true;
 	let customRoom = '';
 	let lastRoom = '';
 
 	onMount(() => {
 		const profile = readProfile();
 		userPseudo = profile.pseudo;
-		rooms = ensureSeed();
 		lastRoom = readLastRoom() || 'general';
+		void loadRooms();
 	});
+
+	async function loadRooms() {
+		roomsLoading = true;
+		try {
+			rooms = await ensureSeed();
+		} finally {
+			roomsLoading = false;
+		}
+	}
 
 	async function joinRoom(id: string, name?: string) {
 		const roomId = (id ?? '').trim();
@@ -32,7 +38,7 @@
 	function onAddCustom(event: Event) {
 		event.preventDefault();
 		if (!customRoom.trim()) return;
-		joinRoom(customRoom.trim());
+		void joinRoom(customRoom.trim());
 		customRoom = '';
 	}
 </script>
@@ -55,9 +61,9 @@
 			<div class="toast">
 				<span class="status-dot" aria-hidden="true"></span>
 				<div>
-					Dernière room : <code>{lastRoom}</code>
+					Dernière room : <code>{lastRoom}</code>
 				</div>
-				<button type="button" class="btn btn--ghost" on:click={() => joinRoom(lastRoom)}>
+				<button type="button" class="btn btn--ghost" on:click={() => void joinRoom(lastRoom)}>
 					Rejoindre à nouveau
 				</button>
 			</div>
@@ -68,12 +74,14 @@
 		<div class="section-title">
 			<div>
 				<h2>Rooms disponibles</h2>
-				<p class="muted">Accédez rapidement aux rooms enregistrées sur l’appareil.</p>
+				<p class="muted">Accédez rapidement aux rooms disponibles.</p>
 			</div>
 		</div>
 
-		{#if rooms.length === 0}
-			<p class="muted">Aucune room enregistrée.</p>
+		{#if roomsLoading}
+			<p class="muted">Chargement des rooms...</p>
+		{:else if rooms.length === 0}
+			<p class="muted">Aucune room disponible pour le moment.</p>
 		{:else}
 			<ul class="list">
 				{#each rooms as room (room.id)}
@@ -85,7 +93,7 @@
 						<button
 							type="button"
 							class="btn btn--ghost"
-							on:click={() => joinRoom(room.id, room.name)}
+							on:click={() => void joinRoom(room.id, room.name)}
 						>
 							Rejoindre
 						</button>
@@ -117,9 +125,28 @@
 </section>
 
 <style>
+	.list-item {
+		align-items: flex-start;
+		justify-content: flex-start;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+	}
+
+	.list-item button {
+		flex-shrink: 0;
+		margin-left: auto;
+	}
+
 	.list-item__details {
 		display: grid;
 		gap: 0.25rem;
+		min-width: 0;
+		flex: 1 1 12rem;
+	}
+
+	.list-item__details strong,
+	.list-item__details .muted {
+		overflow-wrap: anywhere;
 	}
 
 	.list-item__details .muted {
