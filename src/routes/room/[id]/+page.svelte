@@ -41,21 +41,24 @@
 	let clientAvatarKey: Record<string, string> = {};
 	let avatarByKey: Record<string, string> = {};
 	const pendingAvatarFetch = new Set<string>();
+	const pendingAvatarUpload = new Set<string>();
 	let defaultAvatar = '';
 	const defaultAvatarFallback = defaultAvatarUrl;
 	let profilePhotoDataUrl: string | null = null;
 	let mySocketId = '';
 	let lastSyncedAvatarKey: string | null = null;
+	let lastUploadedAvatarData: Record<string, string> = {};
 
 	function normalizePseudo(value?: string | null): string | undefined {
 		const trimmed = (value ?? '').trim();
 		return trimmed ? trimmed.toLowerCase() : undefined;
 	}
 
-	function remoteImageKey(socketId?: string | null, pseudoRaw?: string | null): string | undefined {
+	function remoteImageKey(senderId?: string | null, pseudoRaw?: string | null): string | undefined {
+		const trimmedId = typeof senderId === 'string' ? senderId.trim() : '';
+		if (trimmedId) return trimmedId;
 		const pseudoKey = normalizePseudo(pseudoRaw);
 		if (pseudoKey) return `pseudo:${pseudoKey}`;
-		if (socketId) return `socket:${socketId}`;
 		return undefined;
 	}
 
@@ -93,15 +96,16 @@
 	}
 
 	function resolveAvatarKey(msg: Partial<ChatMsg>): string | undefined {
-		const pseudoKey = remoteImageKey(undefined, msg.pseudo);
-		if (pseudoKey) return pseudoKey;
-
 		const senderId = msg.senderId ?? resolveSenderId(msg);
-		if (!senderId) return undefined;
+		if (senderId) {
+			const mapped = clientAvatarKey[senderId];
+			if (mapped) return mapped;
 
-		const mapped = clientAvatarKey[senderId];
-		if (mapped) return mapped;
-		return remoteImageKey(senderId, undefined);
+			const remoteKey = remoteImageKey(senderId, msg.pseudo);
+			if (remoteKey) return remoteKey;
+		}
+
+		return remoteImageKey(undefined, msg.pseudo);
 	}
 
 	function refreshMessageAvatars(): void {
@@ -122,6 +126,10 @@
 
 	async function ensureAvatarForKey(key: string | undefined, force = false) {
 		if (!key) return;
+		if (key.startsWith('pseudo:')) {
+			refreshMessageAvatars();
+			return;
+		}
 		if (avatarByKey[key] && !force) {
 			refreshMessageAvatars();
 			return;
@@ -137,6 +145,22 @@
 			refreshMessageAvatars();
 		} finally {
 			pendingAvatarFetch.delete(key);
+		}
+	}
+
+	async function persistAvatarForKey(key: string | undefined, dataUrl: string | undefined) {
+		if (!key || !dataUrl) return;
+		if (!isImageDataUrl(dataUrl)) return;
+		if (lastUploadedAvatarData[key] === dataUrl) return;
+		if (pendingAvatarUpload.has(key)) return;
+		pendingAvatarUpload.add(key);
+		try {
+			const success = await uploadUserImage(key, dataUrl);
+			if (success) {
+				lastUploadedAvatarData = { ...lastUploadedAvatarData, [key]: dataUrl };
+			}
+		} finally {
+			pendingAvatarUpload.delete(key);
 		}
 	}
 
@@ -189,6 +213,7 @@
 		const success = await uploadUserImage(remoteKey, photo);
 		if (success) {
 			lastSyncedAvatarKey = remoteKey;
+			lastUploadedAvatarData = { ...lastUploadedAvatarData, [remoteKey]: photo };
 			if (id) {
 				clientAvatarKey = { ...clientAvatarKey, [id]: remoteKey };
 			}
@@ -198,15 +223,20 @@
 	}
 
 	function avatarSrcFor(msg: ChatMsg): string {
+		console.log('avatarSrcFor', msg);
 		const avatarKey = resolveAvatarKey(msg);
+		console.log('  resolved key:', avatarKey);
 		if (avatarKey && avatarByKey[avatarKey]) {
+			console.log('  using avatar from cache');
 			return avatarByKey[avatarKey];
 		}
 
 		if (normalizePseudo(msg.pseudo) === username) {
+			console.log('  using profile photo');
 			return (profilePhotoDataUrl ?? defaultAvatar) || defaultAvatarFallback;
 		}
 
+		console.log('  using default');
 		return defaultAvatar || defaultAvatarFallback;
 	}
 
@@ -346,25 +376,34 @@
 				dropClient(payload?.id, payload?.pseudo);
 			});
 
-			socket.on('chat-msg', (raw: ChatMsg) => {
-				const senderId = resolveSenderId(raw);
-				const pseudoKey = normalizePseudo(raw.pseudo);
+			socket.on('chat-msg', (msg: ChatMsg) => {
+				const senderId = resolveSenderId(msg);
+				const pseudoKey = normalizePseudo(msg.pseudo);
 				if (senderId && pseudoKey && pseudoToSocketId[pseudoKey] !== senderId) {
 					pseudoToSocketId = { ...pseudoToSocketId, [pseudoKey]: senderId };
 				}
-				const remoteKey = remoteImageKey(senderId, raw.pseudo);
+				const remoteKey = remoteImageKey(senderId, msg.pseudo);
 				if (senderId && remoteKey) {
 					clientAvatarKey = { ...clientAvatarKey, [senderId]: remoteKey };
 				}
 				if (remoteKey) {
-					void ensureAvatarForKey(remoteKey, raw.categorie === 'NEW_IMAGE');
+					const incomingAvatar = msg.avatarDataUrl;
+					if (isImageDataUrl(incomingAvatar ?? '')) {
+						if (avatarByKey[remoteKey] !== incomingAvatar) {
+							avatarByKey = { ...avatarByKey, [remoteKey]: incomingAvatar as string };
+							refreshMessageAvatars();
+						}
+						void persistAvatarForKey(remoteKey, incomingAvatar as string);
+					} else {
+						void ensureAvatarForKey(remoteKey, msg.categorie === 'NEW_IMAGE');
+					}
 				}
 
-				const avatar = remoteKey ? avatarByKey[remoteKey] : raw.avatarDataUrl;
+				const avatar = remoteKey ? avatarByKey[remoteKey] : msg.avatarDataUrl;
 				const next: ChatMsg = {
-					...raw,
-					senderId: senderId ?? raw.senderId,
-					avatarDataUrl: avatar ?? raw.avatarDataUrl
+					...msg,
+					senderId: senderId ?? msg.senderId,
+					avatarDataUrl: avatar ?? msg.avatarDataUrl
 				};
 				const shouldStick = isNearBottom();
 				messages = [...messages, next];
@@ -378,22 +417,22 @@
 					updateJumpButton();
 				}
 
-				// si info ou message du user connecte alors pas notif
-				if (raw.categorie === 'INFO') return;
-				if (normalizePseudo(raw.pseudo) === username) return;
+				// si info ou message du user connecté alors pas notif
+				if (msg.categorie === 'INFO') return;
+				if (normalizePseudo(msg.pseudo) === username) return;
 
 				// si message avant la connexion, pas de notif
-				const emissionTs = raw.dateEmis ? Date.parse(raw.dateEmis) : Date.now();
+				const emissionTs = msg.dateEmis ? Date.parse(msg.dateEmis) : Date.now();
 				if (emissionTs < joinedAt) return;
 
 				// notif tronquee si trop longue ou image
-				const body = isImageDataUrl(raw.content)
+				const body = isImageDataUrl(msg.content)
 					? '[Image]'
-					: raw.content.length > 100
-						? `${raw.content.slice(0, 97)}...`
-						: raw.content;
+					: msg.content.length > 100
+						? `${msg.content.slice(0, 97)}...`
+						: msg.content;
 
-				notifyAndVibrate(`Nouveau message de ${raw.pseudo ?? 'client'}`, { body }, [100, 30, 150]);
+				notifyAndVibrate(`Nouveau message de ${msg.pseudo ?? 'client'}`, { body }, [100, 30, 150]);
 			});
 			if (socket.disconnected) {
 				socket.connect();
@@ -827,4 +866,3 @@
 		}
 	}
 </style>
-
