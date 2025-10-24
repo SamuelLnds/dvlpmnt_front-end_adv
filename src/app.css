@@ -190,7 +190,8 @@ pre {
 }
 
 .stack {
-	display: grid;
+	display: flex;
+	flex-direction: column;
 	gap: clamp(1rem, 1.6vw, 1.75rem);
 }
 
@@ -334,7 +335,7 @@ p {
 }
 
 .btn--ghost {
-	background: transparent;
+	opacity: .75;
 	border-color: var(--color-border);
 }
 
@@ -867,17 +868,6 @@ label {
 	gap: 0.75rem;
 }
 
-.media-grid {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-	gap: 0.75rem;
-	align-items: stretch;
-}
-
-.media-grid > * {
-	height: 100%;
-}
-
 .media-thumb {
 	position: relative;
 	border-radius: var(--radius-sm);
@@ -910,291 +900,6 @@ label {
 	gap: 0.5rem;
 }
 
-.media-card {
-	gap: 0.75rem;
-	height: 100%;
-	grid-template-rows: minmax(0, auto) 1fr;
-}
-
-.media-card .card-actions {
-	justify-content: space-around;
-}
-
-.media-card .stack {
-	height: 100%;
-	align-content: space-between;
-}
-
-.list-item__details {
-	display: grid;
-	gap: 0.25rem;
-}
-
-.list-item__details .muted {
-	font-size: 0.85rem;
-}
-
-.profile-header {
-	display: grid;
-	gap: 1.25rem;
-	align-items: center;
-	grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-}
-
-.profile-preview {
-	display: grid;
-	gap: 0.5rem;
-	justify-items: center;
-	text-align: center;
-}
-
-.avatar-placeholder {
-	width: 112px;
-	height: 112px;
-	display: grid;
-	place-items: center;
-	border-radius: 50%;
-	border: 2px dashed var(--color-border);
-	color: var(--color-text-muted);
-	background: var(--color-bg-muted);
-	font-size: 0.85rem;
-	padding: 0.5rem;
-}
-
-.btn--small {
-	padding: 0.35rem 0.65rem;
-}
-
-.profile-panel {
-	display: grid;
-	gap: 0.75rem;
-	border: 1px dashed var(--color-border);
-	background: var(--color-bg-muted);
-}
-
-.profile-upload {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.5rem;
-}
-
-.profile-gallery {
-	display: grid;
-	gap: 0.75rem;
-}
-
-.thumb-grid {
-	list-style: none;
-	padding: 0;
-	margin: 0;
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-	gap: 0.6rem;
-}
-
-button.media-thumb {
-	all: unset;
-	display: block;
-	width: 100%;
-	cursor: pointer;
-}
-
-button.media-thumb:focus-visible {
-	outline: 3px solid var(--color-accent);
-	outline-offset: 2px;
-}
-
-.camera-frame {
-	border: 1px solid var(--color-border);
-	border-radius: var(--radius-lg);
-	padding: 0.75rem;
-	background: var(--color-bg-muted);
-	display: grid;
-	place-items: center;
-}
-
-.camera-video {
-	width: min(640px, 100%);
-	border-radius: var(--radius-md);
-	background: #000;
-}
-
-.capture-image {
-	width: min(320px, 100%);
-	border-radius: var(--radius-md);
-	box-shadow: var(--shadow-soft);
-}
-
-.text-link {
-	color: var(--color-accent);
-	text-decoration: underline;
-}
-
-.chat-shell {
-	position: relative;
-	gap: clamp(1rem, 2vw, 1.5rem);
-}
-
-.chat-header {
-	display: flex;
-	align-items: baseline;
-	justify-content: space-between;
-	gap: 1rem;
-	flex-wrap: wrap;
-}
-
-.chat-status {
-	padding: 0.35rem 0.75rem;
-	border-radius: var(--radius-sm);
-	border: 1px solid var(--color-border);
-	background: var(--color-bg-muted);
-	font-weight: 600;
-	font-size: 0.9rem;
-	text-transform: capitalize;
-}
-
-.chat-status[data-state='connected'] {
-	background: var(--color-secondary-soft);
-	color: var(--color-secondary);
-	border-color: transparent;
-}
-
-.chat-status[data-state='reconnecting'] {
-	background: var(--color-warning-soft);
-	color: var(--color-warning);
-	border-color: transparent;
-}
-
-.chat-status[data-state='disconnected'] {
-	background: var(--color-danger-soft);
-	color: var(--color-danger);
-	border-color: transparent;
-}
-
-.chat-log {
-	position: relative;
-	display: grid;
-	gap: 0.75rem;
-	padding: 1rem;
-	border-radius: var(--radius-lg);
-	border: 1px solid var(--color-border);
-	background: var(--color-bg-muted);
-	max-height: min(68vh, 520px);
-	overflow-y: auto;
-}
-
-.chat-message {
-	display: grid;
-	gap: 0.4rem;
-	padding: 0.5rem 0;
-	border-bottom: 1px solid var(--color-border);
-}
-
-.chat-message:last-child {
-	border-bottom: none;
-	padding-bottom: 0;
-}
-
-.chat-message__meta {
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-	flex-wrap: wrap;
-	font-size: 0.85rem;
-	color: var(--color-text-muted);
-}
-
-.chat-message__author {
-	color: var(--color-text);
-	font-size: 0.95rem;
-}
-
-.chat-message__text {
-	margin: 0;
-	white-space: pre-wrap;
-	word-break: break-word;
-}
-
-.chat-message__image {
-	display: grid;
-	gap: 0.35rem;
-}
-
-.chat-message__image img {
-	max-width: min(320px, 100%);
-	border-radius: var(--radius-md);
-	box-shadow: var(--shadow-soft);
-}
-
-.chat-jump {
-	position: sticky;
-	bottom: 1rem;
-	margin-left: auto;
-	display: inline-flex;
-	align-items: center;
-	gap: 0.35rem;
-}
-
-.chat-composer {
-	display: grid;
-	gap: 0.75rem;
-	border-radius: var(--radius-lg);
-	border: 1px solid var(--color-border);
-	background: var(--color-bg-muted);
-	padding: 0.75rem;
-}
-
-.chat-composer__actions {
-	display: flex;
-	gap: 0.5rem;
-	justify-content: flex-end;
-}
-
-.chat-picker {
-	position: fixed;
-	inset: 0;
-	display: grid;
-	place-items: center;
-	background: var(--color-overlay);
-	z-index: 60;
-	padding: 1.5rem;
-}
-
-.chat-picker__card {
-	width: min(680px, 96vw);
-	display: grid;
-	gap: 0.75rem;
-}
-
-.chat-picker__header {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-}
-
-.chat-picker__menu {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-	gap: 0.5rem;
-}
-
-.chat-picker__section {
-	display: grid;
-	gap: 0.75rem;
-}
-
-.chat-picker__preview img {
-	max-width: min(280px, 80vw);
-	border-radius: var(--radius-md);
-	box-shadow: var(--shadow-soft);
-}
-
-.chat-picker__footer {
-	display: flex;
-	justify-content: flex-end;
-	gap: 0.5rem;
-}
-
 .toolbar {
 	display: flex;
 	align-items: center;
@@ -1208,6 +913,18 @@ button.media-thumb:focus-visible {
 	gap: 0.5rem;
 	align-items: center;
 	flex-wrap: wrap;
+}
+
+button.media-thumb {
+	all: unset;
+	display: block;
+	width: 100%;
+	cursor: pointer;
+}
+
+button.media-thumb:focus-visible {
+	outline: 3px solid var(--color-accent);
+	outline-offset: 2px;
 }
 
 .kpi-row {
@@ -1241,6 +958,7 @@ button.media-thumb:focus-visible {
 }
 
 .sr-link {
+	flex: 1;
 	position: relative;
 }
 
@@ -1259,28 +977,6 @@ button.media-thumb:focus-visible {
 
 	.app-main {
 		padding: clamp(1rem, 4vw, 2.5rem);
-	}
-
-	.profile-header {
-		grid-template-columns: 1fr;
-		text-align: center;
-	}
-
-	.profile-preview {
-		justify-items: center;
-	}
-
-	.chat-header {
-		align-items: flex-start;
-	}
-
-	.chat-log {
-		max-height: min(60vh, 460px);
-	}
-
-	.chat-composer__actions {
-		flex-wrap: wrap;
-		justify-content: flex-end;
 	}
 }
 

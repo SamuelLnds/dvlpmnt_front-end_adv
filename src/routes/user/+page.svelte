@@ -178,11 +178,11 @@
 			bind:this={avatarCam}
 			facingMode="user"
 			mirror={true}
-			on:captured={(event) => {
-				profile.photoDataUrl = event.detail;
+			onCaptured={(dataUrl) => {
+				profile.photoDataUrl = dataUrl;
 				isDefaultAvatar = false;
 				saved = '';
-				addPhotoFromDataURL(event.detail);
+				addPhotoFromDataURL(dataUrl);
 				photos = readPhotos();
 			}}
 		/>
@@ -200,3 +200,74 @@
 		<button type="button" class="btn btn--danger" on:click={logout}>Se déconnecter</button>
 	{/if}
 </section>
+
+<style>
+	.profile-header {
+		display: grid;
+		gap: 1.25rem;
+		align-items: center;
+		grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+	}
+
+	.profile-preview {
+		display: grid;
+		gap: 0.5rem;
+		justify-items: center;
+		text-align: center;
+	}
+
+	.avatar-placeholder {
+		width: 112px;
+		height: 112px;
+		display: grid;
+		place-items: center;
+		border-radius: 50%;
+		border: 2px dashed var(--color-border);
+		color: var(--color-text-muted);
+		background: var(--color-bg-muted);
+		font-size: 0.85rem;
+		padding: 0.5rem;
+	}
+
+	.btn--small {
+		padding: 0.35rem 0.65rem;
+	}
+
+	.profile-panel {
+		display: grid;
+		gap: 0.75rem;
+		border: 1px dashed var(--color-border);
+		background: var(--color-bg-muted);
+	}
+
+	.profile-upload {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.profile-gallery {
+		display: grid;
+		gap: 0.75rem;
+	}
+
+	.thumb-grid {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+		gap: 0.6rem;
+	}
+
+	@media (max-width: 960px) {
+		.profile-header {
+			grid-template-columns: 1fr;
+			text-align: center;
+		}
+
+		.profile-preview {
+			justify-items: center;
+		}
+	}
+</style>

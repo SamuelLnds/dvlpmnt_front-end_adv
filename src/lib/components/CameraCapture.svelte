@@ -1,17 +1,18 @@
 <script lang="ts">
 	import { addPhotoFromDataURL } from '$lib/storage/photos';
-	import { createEventDispatcher, onDestroy, tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 
 	export let quality = 0.85; // JPEG quality
 	export let facingMode: 'user' | 'environment' = 'user';
 	export let mirror = true; // mirroring pour selfie
 
-	const dispatch = createEventDispatcher<{
-		open: void;
-		close: void;
-		captured: string; // Data URL
-		error: string;
-	}>();
+	const noop = () => {};
+	const noopWithString = (_: string) => {};
+
+	export let onOpen: () => void = noop;
+	export let onClose: () => void = noop;
+	export let onCaptured: (dataUrl: string) => void = noopWithString;
+	export let onError: (message: string) => void = noopWithString;
 
 	let videoEl: HTMLVideoElement | null = null;
 	let stream: MediaStream | null = null;
@@ -51,11 +52,11 @@
 				});
 				await videoEl.play().catch(() => {});
 			}
-			dispatch('open');
+			onOpen();
 		} catch (e) {
 			ready = false;
 			close(); // nettoie si partiellement ouvert
-			dispatch('error', (e as Error).message);
+			onError((e as Error).message);
 		}
 	}
 
@@ -67,7 +68,7 @@
 		ready = false;
 		isOpen = false;
 		snapshot = null;
-		dispatch('close');
+		onClose();
 	}
 
 	onDestroy(close);
@@ -94,7 +95,7 @@
 		if (videoEl) videoEl.srcObject = null;
 		ready = false;
 
-		dispatch('captured', snapshot);
+		onCaptured(snapshot);
 	}
 
 	/** Reprendre un nouveau cliché*/

@@ -115,3 +115,14 @@
 		</div>
 	</form>
 </section>
+
+<style>
+	.list-item__details {
+		display: grid;
+		gap: 0.25rem;
+	}
+
+	.list-item__details .muted {
+		font-size: 0.85rem;
+	}
+</style>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
+	import { ChevronDown, Image as ImageIcon, X } from 'lucide-svelte';
 	import type { PageData as OriginalPageData } from './$types';
 	type PageData = OriginalPageData & { roomId: string };
 
@@ -268,15 +269,7 @@
 			aria-label="Aller au message le plus récent"
 			on:click={() => scrollToBottom(true)}
 		>
-			<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-				<path
-					d="M6 9l6 6 6-6"
-					stroke="currentColor"
-					stroke-width="1.5"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				/>
-			</svg>
+			<ChevronDown size={18} stroke-width={1.5} aria-hidden="true" />
 			Dernier
 		</button>
 	{/if}
@@ -299,22 +292,7 @@
 				on:click={openPicker}
 				title="Envoyer une image"
 			>
-				<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-					<path
-						d="M4.5 7.5A3 3 0 0 1 7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3z"
-						stroke="currentColor"
-						stroke-width="1.5"
-						stroke-linecap="round"
-					/>
-					<path
-						d="M9 11.25l2.25 2.25 3-3 3 3"
-						stroke="currentColor"
-						stroke-width="1.5"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-					/>
-					<circle cx="9" cy="8.25" r="1" fill="currentColor" />
-				</svg>
+				<ImageIcon size={20} stroke-width={1.5} aria-hidden="true" />
 			</button>
 			<button type="submit" class="btn btn--primary" disabled={status !== 'connected'}>
 				Envoyer
@@ -328,14 +306,7 @@
 				<header class="chat-picker__header">
 					<strong>Ajouter une image</strong>
 					<button class="btn btn--ghost btn--icon" on:click={closePicker} aria-label="Fermer">
-						<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-							<path
-								d="M6 6l12 12M6 18L18 6"
-								stroke="currentColor"
-								stroke-width="1.5"
-								stroke-linecap="round"
-							/>
-						</svg>
+						<X size={20} stroke-width={1.5} aria-hidden="true" />
 					</button>
 				</header>
 
@@ -387,8 +358,8 @@
 							quality={0.85}
 							facingMode="user"
 							mirror={true}
-							on:captured={(event) => {
-								selectedDataUrl = event.detail;
+							onCaptured={(dataUrl) => {
+								selectedDataUrl = dataUrl;
 							}}
 						/>
 					</div>
@@ -414,3 +385,195 @@
 		</div>
 	{/if}
 </section>
+
+<style>
+	.chat-shell {
+		position: relative;
+		gap: clamp(1rem, 2vw, 1.5rem);
+	}
+
+	.chat-header {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
+
+	.chat-status {
+		padding: 0.35rem 0.75rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-muted);
+		font-weight: 600;
+		font-size: 0.9rem;
+		text-transform: capitalize;
+	}
+
+	.chat-status[data-state='connected'] {
+		background: var(--color-secondary-soft);
+		color: var(--color-secondary);
+		border-color: transparent;
+	}
+
+	.chat-status[data-state='reconnecting'] {
+		background: var(--color-warning-soft);
+		color: var(--color-warning);
+		border-color: transparent;
+	}
+
+	.chat-status[data-state='disconnected'] {
+		background: var(--color-danger-soft);
+		color: var(--color-danger);
+		border-color: transparent;
+	}
+
+	.chat-log {
+		position: relative;
+		display: grid;
+		gap: 0.75rem;
+		padding: 1rem;
+		border-radius: var(--radius-lg);
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-muted);
+		max-height: min(68vh, 520px);
+		overflow-y: auto;
+	}
+
+	.chat-message {
+		display: grid;
+		gap: 0.4rem;
+		padding: 0.5rem 0;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.chat-message:last-child {
+		border-bottom: none;
+		padding-bottom: 0;
+	}
+
+	.chat-message__meta {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		font-size: 0.85rem;
+		color: var(--color-text-muted);
+	}
+
+	.chat-message__author {
+		color: var(--color-text);
+		font-size: 0.95rem;
+	}
+
+	.chat-message__text {
+		margin: 0;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	.chat-message__image {
+		display: grid;
+		gap: 0.35rem;
+	}
+
+	.chat-message__image img {
+		max-width: min(320px, 100%);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-soft);
+	}
+
+	.chat-jump {
+		position: absolute;
+		bottom: 8.5rem;
+		right: 3rem;
+		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+
+	.chat-composer {
+		display: flex;
+		gap: 0.75rem;
+		border-radius: var(--radius-lg);
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-muted);
+		padding: 0.75rem;
+	}
+
+	.chat-composer__actions {
+		display: flex;
+		gap: 0.5rem;
+		justify-content: flex-end;
+	}
+
+	.chat-picker {
+		position: fixed;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		background: var(--color-overlay);
+		z-index: 60;
+		padding: 1.5rem;
+	}
+
+	.chat-picker__card {
+		width: min(680px, 96vw);
+		display: grid;
+		gap: 0.75rem;
+	}
+
+	.chat-picker__header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.chat-picker__menu {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+		gap: 0.5rem;
+	}
+
+	.chat-picker__section {
+		display: grid;
+		gap: 0.75rem;
+	}
+
+	.chat-picker__preview img {
+		max-width: min(280px, 80vw);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-soft);
+	}
+
+	.chat-picker__footer {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.5rem;
+	}
+
+	.thumb-grid {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+		gap: 0.6rem;
+	}
+
+	@media (max-width: 960px) {
+		.chat-header {
+			align-items: flex-start;
+		}
+
+		.chat-log {
+			max-height: min(60vh, 460px);
+		}
+
+		.chat-composer__actions {
+			flex-wrap: wrap;
+			justify-content: flex-end;
+		}
+	}
+</style>

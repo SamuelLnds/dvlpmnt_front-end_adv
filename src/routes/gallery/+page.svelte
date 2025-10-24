@@ -91,3 +91,31 @@
 		</div>
 	{/if}
 </section>
+
+<style>
+	.media-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+		gap: 0.75rem;
+		align-items: stretch;
+	}
+
+	.media-grid > * {
+		height: 100%;
+	}
+
+	.media-card {
+		gap: 0.75rem;
+		height: 100%;
+		grid-template-rows: minmax(0, auto) 1fr;
+	}
+
+	.media-card .card-actions {
+		justify-content: space-around;
+	}
+
+	.media-card .stack {
+		height: 100%;
+		align-content: space-between;
+	}
+</style>

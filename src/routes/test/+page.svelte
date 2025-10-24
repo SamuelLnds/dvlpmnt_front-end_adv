@@ -183,3 +183,31 @@
 		</article>
 	{/if}
 </section>
+
+<style>
+	.camera-frame {
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
+		padding: 0.75rem;
+		background: var(--color-bg-muted);
+		display: grid;
+		place-items: center;
+	}
+
+	.camera-video {
+		width: min(640px, 100%);
+		border-radius: var(--radius-md);
+		background: #000;
+	}
+
+	.capture-image {
+		width: min(320px, 100%);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-soft);
+	}
+
+	.text-link {
+		color: var(--color-accent);
+		text-decoration: underline;
+	}
+</style>
