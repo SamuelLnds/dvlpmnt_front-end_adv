@@ -23,21 +23,28 @@
 		pseudo?: string;
 	};
 
-	// --- état chat
-	let status: 'connecting' | 'connected' | 'reconnecting' | 'disconnected' = 'connecting';
+	type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
+	let status: ConnectionStatus = 'connecting';
 	let messages: ChatMsg[] = [];
 	let text = '';
 	let joinedAt = 0;
 	let username = '';
 
-	// --- helper image
-	const isImageDataUrl = (s: string) => /^data:image\//i.test(s);
+	const statusLabels: Record<ConnectionStatus, string> = {
+		connecting: 'Connexion…',
+		connected: 'Connecté',
+		reconnecting: 'Reconnexion…',
+		disconnected: 'Déconnecté',
+	};
 
-	// --- picker image
-	let pickerOpen = false as boolean;
+	$: statusText = statusLabels[status];
+
+	const isImageDataUrl = (value: string) => /^data:image\//i.test(value);
+
+	let pickerOpen = false;
 	let pickerTab: 'menu' | 'file' | 'gallery' | 'camera' = 'menu';
 	let selectedDataUrl: string | null = null;
-	let selectedKey: string | null = null; // pour gérer la (dé)sélection par clé
+	let selectedKey: string | null = null;
 
 	function openPicker() {
 		pickerOpen = true;
@@ -45,39 +52,40 @@
 		selectedDataUrl = null;
 		selectedKey = null;
 	}
+
 	function closePicker() {
 		pickerOpen = false;
 		selectedDataUrl = null;
 		selectedKey = null;
-		camRef?.close(); // coupe toujours la caméra à la fermeture
+		camRef?.close();
 	}
 
-	// --- galerie locale
 	let photos: PhotoItem[] = [];
-	function pickFromGallery(p: PhotoItem) {
-		const key = String(p.ts);
+
+	function pickFromGallery(photo: PhotoItem) {
+		const key = String(photo.ts);
 		if (selectedKey === key) {
-			// toggle -> désélection
 			selectedKey = null;
 			selectedDataUrl = null;
 		} else {
 			selectedKey = key;
-			selectedDataUrl = p.dataUrl;
+			selectedDataUrl = photo.dataUrl;
 		}
 	}
 
-	// --- import fichier
-	async function onPickFile(e: Event) {
-		const input = e.target as HTMLInputElement;
+	async function onPickFile(event: Event) {
+		const input = event.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
+
 		const reader = new FileReader();
-		selectedDataUrl = await new Promise<string>((res, rej) => {
-			reader.onload = () => res(String(reader.result));
-			reader.onerror = rej;
+		selectedDataUrl = await new Promise<string>((resolve, reject) => {
+			reader.onload = () => resolve(String(reader.result));
+			reader.onerror = reject;
 			reader.readAsDataURL(file);
 		});
-		selectedKey = 'file:' + (file.name || Date.now());
+
+		selectedKey = `file:${file.name || Date.now()}`;
 		addPhotoFromDataURL(selectedDataUrl);
 		photos = readPhotos();
 	}
@@ -91,6 +99,7 @@
 	function sendSelectedImage() {
 		if (!selectedDataUrl) return;
 		emitMessage(selectedDataUrl);
+
 		// reset
 		selectedDataUrl = null;
 		selectedKey = null;
@@ -98,12 +107,11 @@
 		pickerOpen = false;
 	}
 
-	// --- socket & notifications
 	onMount(() => {
 		const { pseudo } = readProfile();
 		photos = readPhotos();
 
-		resetSocket(); // repartir propre quand on entre dans la room
+		resetSocket();
 
 		withSocket((socket) => {
 			socket.on('connect', () => {
@@ -116,43 +124,49 @@
 			socket.on('disconnect', () => {
 				status = 'disconnected';
 			});
+
 			socket.io.on('reconnect_attempt', () => {
 				status = 'reconnecting';
 			});
-			socket.on('error', (msg: string) => {
-				console.error('Server error:', msg);
+
+			socket.on('error', (message: string) => {
+				console.error('Server error:', message);
 			});
 
 			socket.on('chat-msg', (msg: ChatMsg) => {
 				messages = [...messages, msg];
 
-				// --- notifications filtrées
+				// si info ou message du user connecté alors pas notif
 				if (msg.categorie === 'INFO') return;
 				if ((msg.pseudo ?? 'client').trim().toLowerCase() === username) return;
-				const msgDate = msg.dateEmis ? Date.parse(msg.dateEmis) : Date.now();
-				if (msgDate < joinedAt) return;
 
+				// si message avant la connexion, pas de notif
+				const emissionTs = msg.dateEmis ? Date.parse(msg.dateEmis) : Date.now();
+				if (emissionTs < joinedAt) return;
+
+				// notif tronquée si trop longue ou image
 				const body = isImageDataUrl(msg.content)
 					? '[Image]'
 					: msg.content.length > 100
-						? msg.content.slice(0, 100) + '…'
-						: msg.content;
+					? `${msg.content.slice(0, 100)}…`
+					: msg.content;
 
 				notifyAndVibrate(`Nouveau message de ${msg.pseudo ?? 'client'}`, { body }, [100, 30, 150]);
 			});
 
-			if (socket.disconnected) socket.connect();
+			if (socket.disconnected) {
+				socket.connect();
+			}
 
-			// scroll initial
 			scrollToBottom(false);
 			updateJumpButton();
 		});
 	});
 
 	onDestroy(() => {
-		const s2 = getSocket();
-		s2.removeAllListeners();
-		s2.disconnect();
+		const socket = getSocket();
+		socket.removeAllListeners();
+		socket.disconnect();
 		camRef?.close();
 	});
 
@@ -161,15 +175,14 @@
 		getSocket().emit('chat-msg', payload);
 	}
 
-	function send(e: Event) {
-		e.preventDefault();
+	function send(event: Event) {
+		event.preventDefault();
 		const content = text.trim();
 		if (!content) return;
 		emitMessage(content);
 		text = '';
 	}
 
-	// --- scroll / jump
 	let logEl: HTMLElement;
 	let endEl: HTMLDivElement;
 	let showJump = false;
@@ -177,17 +190,18 @@
 	function scrollToBottom(smooth = true) {
 		endEl?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'end' });
 	}
+
 	function isNearBottom(): boolean {
 		if (!logEl) return true;
 		const gap = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight;
 		return gap < 72;
 	}
+
 	function updateJumpButton() {
 		showJump = !isNearBottom();
 	}
 
 	$: (async () => {
-		const _len = messages.length;
 		if (isNearBottom()) {
 			await tick();
 			scrollToBottom(true);
@@ -198,35 +212,48 @@
 
 <svelte:head><title>Room #{data.roomId}</title></svelte:head>
 
-<main class="wrap">
-	<header class="bar">
-		<h1># {roomId}</h1>
-		<span class="status {status}">{status}</span>
+<section class="surface stack chat-shell">
+	<header class="chat-header">
+		<div>
+			<div class="eyebrow">Salon</div>
+			<h1># {roomId}</h1>
+		</div>
+		<span class="chat-status" data-state={status}>{statusText}</span>
 	</header>
 
-	<section class="log" role="log" aria-live="polite" bind:this={logEl} on:scroll={updateJumpButton}>
+	<section
+		class="chat-log"
+		role="log"
+		aria-live="polite"
+		bind:this={logEl}
+		on:scroll={updateJumpButton}
+	>
 		{#if messages.length === 0}
-			<p class="muted">En attente de messages…</p>
+			<p class="muted">En attente de messages.</p>
 		{/if}
 		{#if messages.length > 0}
-			{#each messages as m, i}
-				<article class="msg">
-					<div class="meta">
-						<strong>{m.pseudo ?? 'client'}</strong>
-						<time>{m.dateEmis ? new Date(m.dateEmis).toLocaleTimeString() : ''}</time>
-						{#if m.categorie && m.categorie !== 'MESSAGE'}<em>{m.categorie}</em>{/if}
-					</div>
+			{#each messages as message}
+				<article class="chat-message" data-category={message.categorie ?? 'MESSAGE'}>
+					<header class="chat-message__meta">
+						<strong class="chat-message__author">{message.pseudo ?? 'client'}</strong>
+						<time class="chat-message__time">
+							{message.dateEmis ? new Date(message.dateEmis).toLocaleTimeString() : ''}
+						</time>
+						{#if message.categorie && message.categorie !== 'MESSAGE'}
+							<span class="badge badge--warning">{message.categorie}</span>
+						{/if}
+					</header>
 
-					{#if isImageDataUrl(m.content)}
-						<figure class="img-msg">
+					{#if isImageDataUrl(message.content)}
+						<figure class="chat-message__image">
 							<!-- svelte-ignore a11y_img_redundant_alt -->
-							<img src={m.content} alt="image envoyée" />
+							<img src={message.content} alt="Image envoyée" />
 							<figcaption class="muted">
-								{new Date(m.dateEmis ?? Date.now()).toLocaleTimeString()}
+								{new Date(message.dateEmis ?? Date.now()).toLocaleTimeString()}
 							</figcaption>
 						</figure>
 					{:else}
-						<p class="text">{m.content}</p>
+						<p class="chat-message__text">{message.content}</p>
 					{/if}
 				</article>
 			{/each}
@@ -236,91 +263,144 @@
 
 	{#if showJump}
 		<button
-			class="jump-to-bottom"
+			class="chat-jump btn btn--ghost"
 			type="button"
 			aria-label="Aller au message le plus récent"
 			on:click={() => scrollToBottom(true)}
 		>
-			⬇ Dernier
+			<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path
+					d="M6 9l6 6 6-6"
+					stroke="currentColor"
+					stroke-width="1.5"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				/>
+			</svg>
+			Dernier
 		</button>
 	{/if}
 
-	<!-- Composer -->
-	<form class="composer" on:submit={send}>
-		<input name="text" bind:value={text} placeholder="Votre message…" autocomplete="off" />
-		<div class="actions">
-			<button type="button" on:click={openPicker} title="Envoyer une image">📷 Image</button>
-			<button type="submit" disabled={status !== 'connected'}>Envoyer</button>
+	<form class="chat-composer" on:submit={send}>
+		<label class="chat-composer__input sr-link">
+			<span class="sr-only">Votre message</span>
+			<input
+				name="text"
+				class="input"
+				bind:value={text}
+				placeholder="Votre message…"
+				autocomplete="off"
+			/>
+		</label>
+		<div class="chat-composer__actions">
+			<button
+				type="button"
+				class="btn btn--ghost btn--icon"
+				on:click={openPicker}
+				title="Envoyer une image"
+			>
+				<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+					<path
+						d="M4.5 7.5A3 3 0 0 1 7.5 4.5h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3z"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+					/>
+					<path
+						d="M9 11.25l2.25 2.25 3-3 3 3"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
+					<circle cx="9" cy="8.25" r="1" fill="currentColor" />
+				</svg>
+			</button>
+			<button type="submit" class="btn btn--primary" disabled={status !== 'connected'}>
+				Envoyer
+			</button>
 		</div>
 	</form>
 
-	<!-- Picker Image -->
 	{#if pickerOpen}
-		<div class="modal" role="dialog" aria-label="Choisir une image">
-			<div class="modal-card">
-				<header class="modal-bar">
+		<div class="chat-picker" role="dialog" aria-label="Choisir une image">
+			<div class="chat-picker__card surface">
+				<header class="chat-picker__header">
 					<strong>Ajouter une image</strong>
-					<button class="ghost" on:click={closePicker} aria-label="Fermer">✕</button>
+					<button class="btn btn--ghost btn--icon" on:click={closePicker} aria-label="Fermer">
+						<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+							<path
+								d="M6 6l12 12M6 18L18 6"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+							/>
+						</svg>
+					</button>
 				</header>
 
 				{#if pickerTab === 'menu'}
-					<div class="grid3">
-						<button class="btn" on:click={() => (pickerTab = 'file')}>Importer</button>
-						<button class="btn" on:click={() => (pickerTab = 'gallery')}>Galerie</button>
-						<button class="btn" on:click={openCameraTab}>Caméra</button>
+					<div class="chat-picker__menu">
+						<button class="btn btn--ghost" on:click={() => (pickerTab = 'file')}>Importer</button>
+						<button class="btn btn--ghost" on:click={() => (pickerTab = 'gallery')}>Galerie</button>
+						<button class="btn btn--ghost" on:click={openCameraTab}>Caméra</button>
 					</div>
 				{/if}
 
 				{#if pickerTab === 'file'}
-					<div class="file-zone">
+					<div class="chat-picker__section">
 						<input type="file" accept="image/*" on:change={onPickFile} />
 						{#if selectedDataUrl}
-							<div class="preview">
-								<img src={selectedDataUrl} alt="aperçu import" />
+							<div class="chat-picker__preview">
+								<img src={selectedDataUrl} alt="Aperçu import" />
 							</div>
 						{/if}
 					</div>
 				{/if}
 
 				{#if pickerTab === 'gallery'}
-					{#if photos.length === 0}
-						<p class="muted">Aucune photo locale.</p>
-					{:else}
-						<ul class="grid">
-							{#each photos as p (p.ts)}
-								<li>
-									<button
-										type="button"
-										class="thumb {selectedKey === String(p.ts) ? 'selected' : ''}"
-										on:click={() => pickFromGallery(p)}
-									>
-										<img src={p.dataUrl} alt="miniature" />
-									</button>
-								</li>
-							{/each}
-						</ul>
-					{/if}
+					<div class="chat-picker__section">
+						{#if photos.length === 0}
+							<p class="muted">Aucune photo locale.</p>
+						{:else}
+							<ul class="thumb-grid">
+								{#each photos as photo (photo.ts)}
+									<li>
+										<button
+											type="button"
+											class={`media-thumb${selectedKey === String(photo.ts) ? ' media-thumb--selected' : ''}`}
+											on:click={() => pickFromGallery(photo)}
+										>
+											<img src={photo.dataUrl} alt="Miniature" />
+										</button>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					</div>
 				{/if}
 
 				{#if pickerTab === 'camera'}
-					<CameraCapture
-						bind:this={camRef}
-						quality={0.85}
-						facingMode="user"
-						mirror={true}
-						on:captured={(e) => {
-							selectedDataUrl = e.detail;
-						}}
-					/>
+					<div class="chat-picker__section">
+						<CameraCapture
+							bind:this={camRef}
+							quality={0.85}
+							facingMode="user"
+							mirror={true}
+							on:captured={(event) => {
+								selectedDataUrl = event.detail;
+							}}
+						/>
+					</div>
 				{/if}
 
-				<footer class="modal-actions">
-					<button class="btn primary" on:click={sendSelectedImage} disabled={!selectedDataUrl}>
+				<footer class="chat-picker__footer">
+					<button class="btn btn--primary" on:click={sendSelectedImage} disabled={!selectedDataUrl}>
 						Envoyer
 					</button>
 					{#if selectedDataUrl}
 						<button
-							class="btn ghost"
+							class="btn btn--ghost"
 							on:click={() => {
 								selectedDataUrl = null;
 								selectedKey = null;
@@ -333,200 +413,4 @@
 			</div>
 		</div>
 	{/if}
-</main>
-
-<style>
-	.wrap {
-		position: relative;
-		max-width: 1200px;
-		margin: 0 auto;
-		padding: 1rem;
-		display: grid;
-		gap: 0.75rem;
-	}
-	.bar {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-	}
-	.status {
-		text-transform: lowercase;
-		font-size: 0.9rem;
-	}
-	.status.connected {
-		color: #0a7d25;
-	}
-	.status.reconnecting {
-		color: #b38b00;
-	}
-	.status.disconnected,
-	.status.connecting {
-		color: #b81414;
-	}
-
-	.log {
-		position: relative;
-		max-height: 70svh;
-		max-width: 100%;
-		overflow-y: auto;
-		overflow-x: hidden;
-	}
-	.jump-to-bottom {
-		position: absolute;
-		right: 1rem;
-		bottom: 4rem;
-		padding: 0.4rem 0.6rem;
-		border: 1px solid #ddd;
-		border-radius: 0.5rem;
-		background: #fff;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-		cursor: pointer;
-	}
-	.jump-to-bottom:hover {
-		background: #f7f7f7;
-	}
-
-	.muted {
-		color: #777;
-	}
-	.msg {
-		border-bottom: 1px solid #f2f2f2;
-		padding: 0.5rem 0;
-		width: 100%;
-		text-wrap: wrap;
-	}
-	.msg:last-child {
-		border-bottom: none;
-	}
-	.meta {
-		display: flex;
-		gap: 0.5rem;
-		align-items: baseline;
-		color: #555;
-	}
-	.text {
-		margin: 0.25rem 0;
-		word-wrap: break-word;
-	}
-
-	.img-msg img {
-		max-width: 280px;
-		max-height: 280px;
-		border-radius: 0.5rem;
-		display: block;
-	}
-	.img-msg {
-		display: grid;
-		gap: 0.25rem;
-	}
-
-	.composer {
-		display: grid;
-		grid-template-columns: 1fr auto;
-		gap: 0.5rem;
-	}
-	.actions {
-		display: flex;
-		gap: 0.5rem;
-	}
-
-	/* Modal */
-	.modal {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.35);
-		display: grid;
-		place-items: center;
-		z-index: 50;
-	}
-	.modal-card {
-		background: #fff;
-		border-radius: 0.75rem;
-		padding: 0.75rem;
-		width: min(680px, 96vw);
-		display: grid;
-		gap: 0.5rem;
-	}
-	.modal-bar {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-	}
-	.modal-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 0.5rem;
-	}
-
-	.grid3 {
-		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: 0.5rem;
-	}
-	.grid {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-		gap: 0.5rem;
-	}
-	.thumb {
-		border: 1px solid #e5e7eb;
-		background: #fff;
-		border-radius: 0.5rem;
-		padding: 0;
-		cursor: pointer;
-		overflow: hidden;
-		transition:
-			transform 0.06s ease,
-			box-shadow 0.12s ease,
-			outline-color 0.12s ease;
-	}
-	.thumb:active {
-		transform: scale(0.98);
-	}
-	.thumb.selected {
-		outline: 3px solid #3b82f6;
-		outline-offset: 2px;
-		box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
-	}
-	.thumb img {
-		width: 100%;
-		height: 96px;
-		object-fit: cover;
-		display: block;
-	}
-	.thumb:focus-visible {
-		outline: 3px solid #3b82f6;
-		outline-offset: 2px;
-	}
-
-	.file-zone .preview img {
-		display: block;
-		max-width: 240px;
-		max-height: 240px;
-		border-radius: 0.5rem;
-	}
-
-	.cam-wrap {
-		display: grid;
-		gap: 0.5rem;
-	}
-
-	.btn {
-		border: 1px solid #ddd;
-		background: #f9f9f9;
-		border-radius: 0.5rem;
-		cursor: pointer;
-		padding: 0.4rem 0.6rem;
-	}
-	.btn.primary {
-		background: #111827;
-		color: #fff;
-		border-color: #111827;
-	}
-	.btn.ghost {
-		background: transparent;
-	}
-</style>
+</section>

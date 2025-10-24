@@ -149,10 +149,22 @@
 		flex-wrap: wrap;
 	}
 	.btn {
-		border: 1px solid #ddd;
-		background: #f9f9f9;
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-elevated);
+		color: var(--color-text);
 		border-radius: 0.5rem;
 		cursor: pointer;
-		padding: 0.4rem 0.6rem;
+		padding: 0.45rem 0.8rem;
+		transition:
+			background var(--transition-medium),
+			border-color var(--transition-medium),
+			color var(--transition-medium);
+	}
+	.btn:hover {
+		background: var(--color-surface-hover);
+	}
+	.btn:focus-visible {
+		outline: none;
+		box-shadow: var(--shadow-ring);
 	}
 </style>

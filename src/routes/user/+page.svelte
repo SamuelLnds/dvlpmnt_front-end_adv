@@ -7,7 +7,7 @@
 		type Profile,
 		PROFILE_KEY,
 		LAST_ROOM_KEY,
-		defaultAvatarDataURL
+		defaultAvatarDataURL,
 	} from '$lib/storage/profile';
 	import { addPhotoFromDataURL, readPhotos, type PhotoItem } from '$lib/storage/photos';
 	import { resetSocket } from '$lib/socket';
@@ -15,22 +15,16 @@
 
 	let profile: Profile = { pseudo: '' };
 	let saved = '';
-
-	// Caméra
 	let avatarCam: InstanceType<typeof CameraCapture> | null = null;
-
-	// Galerie locale
 	let photos: PhotoItem[] = [];
 	let showGallery = false;
-
-	// État avatar
 	let isDefaultAvatar = false;
 
 	onMount(() => {
 		profile = readProfile();
 		photos = readPhotos();
 
-		// Avatar par défaut si absent
+		// si pas d'avatar, mettre l'avatar par défaut
 		if (!profile.photoDataUrl) {
 			defaultAvatarDataURL().then((dataUrl) => {
 				profile.photoDataUrl = dataUrl;
@@ -39,10 +33,11 @@
 		}
 	});
 
-	async function onAvatarFile(e: Event) {
-		const input = e.target as HTMLInputElement;
+	async function onAvatarFile(event: Event) {
+		const input = event.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
+
 		profile.photoDataUrl = await fileToDataURL(file);
 		isDefaultAvatar = false;
 		saved = '';
@@ -56,29 +51,28 @@
 		saved = '';
 	}
 
-	// Choix depuis galerie
-	function pickFromGallery(p: PhotoItem) {
-		profile.photoDataUrl = p.dataUrl;
+	function pickFromGallery(photo: PhotoItem) {
+		profile.photoDataUrl = photo.dataUrl;
 		isDefaultAvatar = false;
 		showGallery = false;
 		saved = '';
 	}
 
-	async function save(e: Event) {
-		e.preventDefault();
+	async function save(event: Event) {
+		event.preventDefault();
 		profile.pseudo = (profile.pseudo ?? '').trim();
 
 		if (!profile.pseudo) {
 			saved = 'Le pseudo est requis';
 			return;
 		}
+
 		if (!profile.photoDataUrl) {
 			profile.photoDataUrl = await defaultAvatarDataURL();
 			isDefaultAvatar = true;
 		}
 
 		writeProfile(profile);
-		// reload dur pour réinitialiser l’app avec l’utilisateur
 		location.assign('/');
 	}
 
@@ -93,204 +87,116 @@
 	}
 </script>
 
-<svelte:head><title>Mon profil</title></svelte:head>
+<svelte:head>
+	<title>Mon profil</title>
+</svelte:head>
 
-<main class="wrap">
-	<h1>Mon profil</h1>
+<section class="surface stack">
+	<header class="section-title">
+		<div>
+			<div class="eyebrow">Profil</div>
+			<h1>Mon profil</h1>
+			<p class="muted">Personnalisez votre identité et votre avatar hors ligne.</p>
+		</div>
+	</header>
 
-	<form class="card" on:submit={save}>
-		<label>
-			Pseudo
-			<input type="text" bind:value={profile.pseudo} required placeholder="Votre pseudo" />
-		</label>
+	<form class="card stack" on:submit={save}>
+		<div class="profile-header">
+			<div class="profile-preview">
+				{#if profile.photoDataUrl}
+					<img
+						class="avatar avatar--lg"
+						src={profile.photoDataUrl}
+						alt={`Avatar de ${profile.pseudo || 'l’utilisateur'}`}
+					/>
+				{:else}
+					<div class="avatar-placeholder">Aucun avatar</div>
+				{/if}
 
-		<fieldset class="avatar-choices">
+				{#if !isDefaultAvatar}
+					<button type="button" class="btn btn--ghost btn--small" on:click={resetAvatar}>
+						Réinitialiser
+					</button>
+				{/if}
+			</div>
+
+			<label class="form-control profile-input" for="pseudo">
+				<span>Pseudo</span>
+				<input
+					id="pseudo"
+					class="input"
+					type="text"
+					bind:value={profile.pseudo}
+					required
+					placeholder="Votre pseudo"
+				/>
+			</label>
+		</div>
+
+		<fieldset class="profile-panel">
 			<legend>Avatar</legend>
 
-			<div class="row">
-				<label class="btn file-btn">
-					Importer
+			<div class="field-row">
+				<label class="btn btn--ghost profile-upload">
 					<input type="file" accept="image/*" on:change={onAvatarFile} hidden />
+					<span>Importer</span>
 				</label>
 
-				<button type="button" class="btn" on:click={() => (showGallery = !showGallery)}>
-					Galerie
+				<button type="button" class="btn btn--ghost" on:click={() => (showGallery = !showGallery)}>
+					{showGallery ? 'Fermer la galerie' : 'Galerie'}
 				</button>
 
-				<button type="button" class="btn" on:click={() => avatarCam?.open()}>
+				<button type="button" class="btn btn--ghost" on:click={() => avatarCam?.open()}>
 					Prendre une photo
 				</button>
 			</div>
 
-			<div class="preview">
-				{#if profile.photoDataUrl}
-					<img src={profile.photoDataUrl} alt="Aperçu avatar" />
-					{#if !isDefaultAvatar}
-						<button type="button" class="btn" on:click={resetAvatar}>Réinitialiser</button>
+			{#if showGallery}
+				<div class="profile-gallery stack">
+					{#if photos.length === 0}
+						<p class="muted">Aucune photo enregistrée dans la galerie.</p>
+					{:else}
+						<ul class="thumb-grid">
+							{#each photos as photo (photo.ts)}
+								<li>
+									<button
+										type="button"
+										class="media-thumb"
+										on:click={() => pickFromGallery(photo)}
+									>
+										<img src={photo.dataUrl} alt="Miniature avatar" />
+									</button>
+								</li>
+							{/each}
+						</ul>
 					{/if}
-				{:else}
-					<div class="placeholder">Aucun avatar</div>
-				{/if}
-			</div>
+				</div>
+			{/if}
 		</fieldset>
 
 		<CameraCapture
 			bind:this={avatarCam}
 			facingMode="user"
 			mirror={true}
-			on:captured={(e) => {
-				profile.photoDataUrl = e.detail;
+			on:captured={(event) => {
+				profile.photoDataUrl = event.detail;
 				isDefaultAvatar = false;
 				saved = '';
-				addPhotoFromDataURL(e.detail);
+				addPhotoFromDataURL(event.detail);
 				photos = readPhotos();
 			}}
 		/>
 
-		{#if showGallery}
-			<div class="gallery">
-				{#if photos.length === 0}
-					<p class="muted">
-						Aucune photo enregistrée dans la galerie.
-					</p>
-				{:else}
-					<ul class="grid">
-						{#each photos as p (p.ts)}
-							<li>
-								<button type="button" class="thumb" on:click={() => pickFromGallery(p)}>
-									<img src={p.dataUrl} alt="miniature" />
-								</button>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
+		{#if saved}
+			<span class="badge badge--danger">{saved}</span>
 		{/if}
 
-		<div class="actions">
-			<button type="submit" class="btn primary">Enregistrer</button>
-			{#if saved}<span class="ok">{saved}</span>{/if}
+		<div class="card-actions">
+			<button type="submit" class="btn btn--primary">Enregistrer</button>
 		</div>
 	</form>
 
 	{#if profile.accountExists}
-		<button type="button" class="btn danger" on:click={logout}>Se déconnecter</button>
+		<button type="button" class="btn btn--danger" on:click={logout}>Se déconnecter</button>
 	{/if}
-</main>
-
-<style>
-	.wrap {
-		max-width: 960px;
-		margin: 0 auto;
-		padding: 1rem;
-	}
-	.card {
-		border: 1px solid #eee;
-		border-radius: 0.5rem;
-		padding: 0.75rem;
-		background: #fff;
-		display: grid;
-		gap: 0.75rem;
-		max-width: 640px;
-	}
-	input,
-	button {
-		padding: 0.5rem 0.75rem;
-	}
-
-	.avatar-choices {
-		border: 1px dashed #e5e7eb;
-		border-radius: 0.5rem;
-		padding: 0.5rem;
-	}
-	.row {
-		display: flex;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-	}
-	.btn {
-		border: 1px solid #ddd;
-		background: #f9f9f9;
-		border-radius: 0.5rem;
-		cursor: pointer;
-	}
-	.btn.primary {
-		background: #111827;
-		color: #fff;
-		border-color: #111827;
-	}
-	.btn.danger {
-		margin-top: 0.75rem;
-		border-color: #dc2626;
-		color: #dc2626;
-		background: #fff;
-	}
-
-	.file-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.preview {
-		margin-top: 0.5rem;
-	}
-	.preview img {
-		width: 96px;
-		height: 96px;
-		object-fit: cover;
-		border-radius: 50%;
-		border: 1px solid #ddd;
-	}
-	.placeholder {
-		width: 96px;
-		height: 96px;
-		display: grid;
-		place-items: center;
-		border: 1px dashed #bbb;
-		border-radius: 50%;
-		color: #777;
-	}
-
-	/* Galerie */
-	.gallery {
-		border-top: 1px solid #f3f4f6;
-		padding-top: 0.5rem;
-	}
-	.grid {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-		gap: 0.5rem;
-	}
-	.thumb {
-		border: 1px solid #e5e7eb;
-		background: #fff;
-		border-radius: 0.5rem;
-		padding: 0;
-		cursor: pointer;
-		overflow: hidden;
-	}
-	.thumb img {
-		display: block;
-		width: 100%;
-		height: 96px;
-		object-fit: cover;
-	}
-
-	.ok {
-		margin-left: 0.5rem;
-		color: #0a7d25;
-		font-weight: 600;
-	}
-	.muted {
-		color: #777;
-	}
-	.actions {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-</style>
+</section>

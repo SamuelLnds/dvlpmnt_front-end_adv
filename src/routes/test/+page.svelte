@@ -2,77 +2,77 @@
 	import { onMount, onDestroy } from 'svelte';
 	import {
 		readPhotos,
-		writePhotos,
 		addPhotoFromDataURL,
 		removePhotoByTs,
 		dataURLFromBlob,
-		downloadPhoto
+		downloadPhoto,
 	} from '$lib/storage/photos';
 	import type { PhotoItem } from '$lib/storage/photos';
 	import { notifyAndVibrate } from '$lib/device';
 
 	let videoEl: HTMLVideoElement | null = null;
 	let stream: MediaStream | null = null;
-	let status = 'Clique “Activer la caméra” puis “Prendre une photo”';
-
+	let status = 'Cliquez sur "Activer la caméra" puis "Prendre une photo".';
 	let photos: PhotoItem[] = [];
 
 	const JPEG_QUALITY = 0.85;
 
-	// --- cycle de vie / init ---
 	onMount(() => {
 		photos = readPhotos();
 	});
+
 	onDestroy(() => stopCamera());
 
-	// --- caméra ---
 	async function startCamera() {
 		if (stream) return;
 		try {
-			status = 'Demande d’autorisation…';
+			status = "Demande d'autorisation...";
 			stream = await navigator.mediaDevices.getUserMedia({ video: true });
 			if (videoEl) {
 				videoEl.srcObject = stream;
 				await videoEl.play();
 			}
 			status = 'Caméra active';
-		} catch (e) {
-			status = `Refusé / indisponible : ${(e as Error).message}`;
+		} catch (error) {
+			status = `Refusée ou indisponible : ${(error as Error).message}`;
 		}
 	}
 
 	function stopCamera() {
-		stream?.getTracks().forEach((t) => t.stop());
+		stream?.getTracks().forEach((track) => track.stop());
 		stream = null;
-		if (videoEl) videoEl.srcObject = null;
+		if (videoEl) {
+			videoEl.srcObject = null;
+		}
 		status = 'Caméra arrêtée';
 	}
 
-	// --- notifications ---
 	type PhotoNotifyKind = 'taken' | 'downloaded' | 'deleted';
+
 	const TITLES: Record<PhotoNotifyKind, string> = {
 		taken: 'Photo enregistrée',
 		downloaded: 'Téléchargement lancé',
-		deleted: 'Photo supprimée'
+		deleted: 'Photo supprimée',
 	};
+
 	const BODIES: Partial<Record<PhotoNotifyKind, string>> = {
 		taken: 'La capture a été effectuée avec succès.',
 		downloaded: 'Votre photo est en cours de téléchargement.',
-		deleted: 'La photo a été supprimée.'
+		deleted: 'La photo a été supprimée.',
 	};
+
 	async function notify(kind: PhotoNotifyKind) {
-		// vibration courte et reconnaissable
 		const pattern = kind === 'taken' ? [60, 20, 60] : 100;
 		await notifyAndVibrate(TITLES[kind], { body: BODIES[kind] }, pattern);
 	}
 
-	// --- capture + persistance via lib ---
 	async function takePhoto() {
 		if (!videoEl) return;
 		if (!videoEl.videoWidth) {
-			status = 'La vidéo n’est pas prête — réessaie dans 1s';
+			status = "La vidéo n'est pas prête, réessayez dans une seconde.";
 			return;
 		}
+
 		const canvas = document.createElement('canvas');
 		canvas.width = videoEl.videoWidth;
 		canvas.height = videoEl.videoHeight;
@@ -88,92 +88,98 @@
 		}
 
 		const dataUrl = await dataURLFromBlob(blob);
-
-		// Lib: ajoute + persiste + retourne l'item
-		const item = addPhotoFromDataURL(dataUrl);
-
-		// Recharger l'état local (source de vérité = localStorage géré par lib)
+		addPhotoFromDataURL(dataUrl);
 		photos = readPhotos();
 		status = 'Photo prise';
-		notify('taken');
+		await notify('taken');
 	}
 
-	// --- actions galerie ---
-	function handleDownload(p: PhotoItem) {
-		downloadPhoto(p);
+	function handleDownload(photo: PhotoItem) {
+		downloadPhoto(photo);
 		notify('downloaded');
 	}
-	function handleDelete(p: PhotoItem) {
-		photos = removePhotoByTs(p.ts);
+
+	function handleDelete(photo: PhotoItem) {
+		photos = removePhotoByTs(photo.ts);
 		notify('deleted');
 	}
+
+	$: statusTone = stream
+		? 'success'
+		: /refusée|indisponible|échec|arrêtée/i.test(status)
+		? 'danger'
+		: 'warning';
 </script>
 
-<h1>Test caméra + capture + notification</h1>
-<p>{status}</p>
+<section class="surface stack">
+	<header class="section-title">
+		<div>
+			<div class="eyebrow">Laboratoire</div>
+			<h1>Test caméra & notifications</h1>
+			<p class="muted">Vérifiez la capture locale, les vibrations et la sauvegarde hors ligne.</p>
+		</div>
+	</header>
 
-<div class="controls">
-	<button on:click={startCamera} disabled={!!stream}>Activer la caméra</button>
-	<button on:click={takePhoto} disabled={!stream}>Prendre une photo</button>
-	<button on:click={stopCamera} disabled={!stream}>Arrêter</button>
-</div>
+	<div class="toast">
+		<span
+			class={`status-dot${statusTone === 'danger' ? ' status-dot--danger' : statusTone === 'warning' ? ' status-dot--warning' : ''}`}
+			aria-hidden="true"
+		></span>
+		<span>{status}</span>
+	</div>
 
-<video bind:this={videoEl} playsinline autoplay class="camera-video">
-	<!-- track pour le linter -->
-	<track kind="captions" src="" srclang="fr" default />
-</video>
+	<div class="field-row">
+		<button type="button" class="btn btn--primary" on:click={startCamera} disabled={!!stream}>
+			Activer la caméra
+		</button>
+		<button type="button" class="btn btn--secondary" on:click={takePhoto} disabled={!stream}>
+			Prendre une photo
+		</button>
+		<button type="button" class="btn btn--ghost" on:click={stopCamera} disabled={!stream}>
+			Arrêter
+		</button>
+	</div>
 
-{#if photos.length}
-	<h2 class="captures-title">Dernière capture</h2>
-	<p>
-		Tu peux aussi aller voir la page <a href="/gallery">Galerie</a> qui liste toutes les photos enregistrées.
-	</p>
-	<figure class="photo-item">
-		<img src={photos[0].dataUrl} alt="capture" class="photo-image" />
-		<figcaption class="photo-caption">
-			{new Date(photos[0].ts).toLocaleString()}
-			<button on:click={() => handleDownload(photos[0])} class="action-button">Télécharger</button>
-			<button on:click={() => handleDelete(photos[0])} class="action-button">Supprimer</button>
-		</figcaption>
-	</figure>
-{/if}
+	<div class="camera-frame surface surface--muted">
+		<video bind:this={videoEl} playsinline autoplay class="camera-video">
+			<track kind="captions" src="" srclang="fr" default />
+		</video>
+	</div>
 
-<style>
-	.controls {
-		display: flex;
-		gap: 0.5rem;
-		margin: 0.75rem 0;
-		flex-wrap: wrap;
-	}
-	.camera-video {
-		width: 100%;
-		max-width: 640px;
-		background: #000;
-		border-radius: 12px;
-	}
-	.captures-title {
-		margin-top: 1rem;
-	}
-	.photo-item {
-		margin: 0;
-	}
-	.photo-image {
-		width: 100%;
-		max-width: 250px;
-		border-radius: 8px;
-		display: block;
-	}
-	.photo-caption {
-		font-size: 0.8rem;
-		color: #666;
-	}
-	.action-button {
-		border: none;
-		background: none;
-		color: inherit;
-		text-decoration: underline;
-		cursor: pointer;
-		padding: 0;
-		font: inherit;
-	}
-</style>
+	{#if photos.length}
+		<article class="card stack">
+			<div class="section-title">
+				<div>
+					<h2>Dernière capture</h2>
+					<p class="muted">
+						Retrouvez l’ensemble des photos dans la
+						<a class="text-link" href="/gallery">galerie</a>.
+					</p>
+				</div>
+			</div>
+
+			<img
+				src={photos[0].dataUrl}
+				alt="Capture récente"
+				class="capture-image"
+				loading="lazy"
+				decoding="async"
+			/>
+
+			<div class="stack">
+				<time class="muted" datetime={new Date(photos[0].ts).toISOString()}>
+					{new Date(photos[0].ts).toLocaleString()}
+				</time>
+
+				<div class="card-actions">
+					<button type="button" class="btn btn--ghost" on:click={() => handleDownload(photos[0])}>
+						Télécharger
+					</button>
+					<button type="button" class="btn btn--ghost" on:click={() => handleDelete(photos[0])}>
+						Supprimer
+					</button>
+				</div>
+			</div>
+		</article>
+	{/if}
+</section>
