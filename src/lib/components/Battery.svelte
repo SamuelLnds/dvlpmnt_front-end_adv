@@ -1,43 +1,56 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
 
-	type BatteryManager = {
-		charging: boolean;
-		level: number; // 0..1
-		addEventListener: (t: string, cb: () => void) => void;
-		removeEventListener: (t: string, cb: () => void) => void;
-	};
+  type BatteryManager = {
+    charging: boolean;
+    level: number; // 0..1
+    addEventListener: (t: string, cb: () => void) => void;
+    removeEventListener: (t: string, cb: () => void) => void;
+  };
 
-	let supported = typeof navigator !== 'undefined' && 'getBattery' in navigator;
-	let level = 1;
-	let charging = false;
-	let bm: BatteryManager | null = null;
+  let supported = false;
+  let level = 1;
+  let charging = false;
+  let bm: BatteryManager | null = null;
 
-	async function init() {
-		try {
-			bm = await (navigator as any).getBattery();
-			const update = () => {
-				if (!bm) return;
-				level = bm.level;
-				charging = bm.charging;
-			};
-			update();
-			bm?.addEventListener('levelchange', update);
-			bm?.addEventListener('chargingchange', update);
-			onDestroy(() => {
-				bm?.removeEventListener('levelchange', update);
-				bm?.removeEventListener('chargingchange', update);
-			});
-		} catch {
-			supported = false;
-		}
-	}
+  const update = () => {
+    if (!bm) return;
+    level = bm.level;
+    charging = bm.charging;
+  };
 
-	onMount(() => {
-		if (supported) init();
-	});
-	$: percent = Math.round(level * 100);
+  onMount(() => {
+    supported = 'getBattery' in navigator && window.isSecureContext;
+    if (!supported) return;
+
+    let active = true;
+
+    (async () => {
+      try {
+        bm = await (navigator as any).getBattery();
+        if (!active || bm === null) return;
+
+        update();
+        bm.addEventListener('levelchange', update);
+        bm.addEventListener('chargingchange', update);
+      } catch (e) {
+        console.error('getBattery() failed:', e);
+        supported = false;
+      }
+    })();
+
+    // cleanup: retournée par onMount (équivalent onDestroy)
+    return () => {
+      active = false;
+      if (!bm) return;
+      bm.removeEventListener('levelchange', update);
+      bm.removeEventListener('chargingchange', update);
+    };
+  });
+
+  $: percent = Math.round(level * 100);
 </script>
+
 
 {#if supported}
 	<div
