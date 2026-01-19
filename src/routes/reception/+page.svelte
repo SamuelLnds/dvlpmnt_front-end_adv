@@ -78,7 +78,7 @@
 		{/if}
 	</header>
 
-	<article class="card stack">
+	<article class="card stack room-container">
 		<div class="section-title">
 			<div>
 				<h2>Rooms disponibles</h2>
@@ -159,5 +159,10 @@
 
 	.list-item__details .muted {
 		font-size: 0.85rem;
+	}
+
+	.room-container {
+		max-height: 50dvh;
+  		overflow: auto;
 	}
 </style>

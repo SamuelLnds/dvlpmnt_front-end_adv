@@ -455,8 +455,6 @@
 		flex-direction: column;
 		gap: 0.75rem;
 		flex-shrink: 0;
-		/* Isolation pour éviter la propagation du hover depuis .surface global */
-		isolation: isolate;
 	}
 
 	/* Désactiver le hover global de .surface pour ce composant */

@@ -479,6 +479,9 @@
 				const emissionTs = msg.dateEmis ? Date.parse(msg.dateEmis) : Date.now();
 				if (emissionTs < joinedAt) return;
 
+				// pas de notif si la page est visible (onglet actif)
+				if (document.visibilityState === 'visible') return;
+
 				// notif tronquee si trop longue ou image
 				const body = isImageDataUrl(msg.content)
 					? '[Image]'
