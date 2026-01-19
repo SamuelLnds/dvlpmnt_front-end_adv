@@ -324,15 +324,11 @@
 
 	function sendSelectedImage() {
 		if (!selectedDataUrl) return;
+		const imageToSend = selectedDataUrl;
 		loadingStore.show('Envoi de l\'image...');
 		try {
-			emitMessage(selectedDataUrl);
-
-			// reset
-			selectedDataUrl = null;
-			selectedKey = null;
-			camRef?.close();
-			pickerOpen = false;
+			closePicker();
+			emitMessage(imageToSend);
 		} finally {
 			// Le loading se termine après un petit délai pour que l'utilisateur voie le feedback
 			setTimeout(() => {
@@ -574,9 +570,15 @@
 						<img
 							class="chat-message__avatar"
 							src={avatarSrcFor(message)}
-							alt={`Avatar de ${message.pseudo ?? 'client'}`}
+							alt={message.pseudo?.charAt(0)?.toUpperCase() ?? '?'}
 							loading="lazy"
 							decoding="async"
+							on:error={(e) => {
+								const img = e.currentTarget as HTMLImageElement;
+								if (img.src !== defaultAvatarFallback) {
+									img.src = defaultAvatarFallback;
+								}
+							}}
 						/>
 						<strong class="chat-message__author">{message.pseudo ?? 'client'}</strong>
 						{#if isOwnMessage}
@@ -843,7 +845,14 @@
 		object-fit: cover;
 		border: 1px solid var(--color-border);
 		flex-shrink: 0;
-		background: var(--color-bg-muted);
+		background: var(--color-primary-soft, #e0e7ff);
+		color: var(--color-primary, #6366f1);
+		font-size: 0.85rem;
+		font-weight: 600;
+		text-align: center;
+		line-height: 30px;
+		overflow: hidden;
+		text-overflow: clip;
 	}
 
 	.chat-message__author {
