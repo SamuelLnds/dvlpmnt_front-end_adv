@@ -12,11 +12,19 @@
 	import { readPhotos, addPhotoFromDataURL, type PhotoItem } from '$lib/storage/photos';
 
 	import CameraCapture from '$lib/components/CameraCapture.svelte';
+	import CallPanel from '$lib/components/CallPanel.svelte';
 	import { loadingStore } from '$lib/stores/loading';
+	import { CallManager, type CallState, type Participant } from '$lib/webrtc';
 	let camRef: InstanceType<typeof CameraCapture> | null = null;
+	let callPanelRef: { setRemoteStream: (stream: MediaStream | null) => void } | null = null;
 
 	export let data: PageData;
 	const roomId = data.roomId;
+
+	// État pour la gestion des appels WebRTC
+	let callManager: CallManager | null = null;
+	let callParticipants: Participant[] = [];
+	let callState: CallState = { phase: 'idle' };
 
 	type ChatMsg = {
 		content: string;
@@ -231,20 +239,15 @@
 	}
 
 	function avatarSrcFor(msg: ChatMsg): string {
-		console.log('avatarSrcFor', msg);
 		const avatarKey = resolveAvatarKey(msg);
-		console.log('  resolved key:', avatarKey);
 		if (avatarKey && avatarByKey[avatarKey]) {
-			console.log('  using avatar from cache');
 			return avatarByKey[avatarKey];
 		}
 
 		if (normalizePseudo(msg.pseudo) === username) {
-			console.log('  using profile photo');
 			return (profilePhotoDataUrl ?? defaultAvatar) || defaultAvatarFallback;
 		}
 
-		console.log('  using default');
 		return defaultAvatar || defaultAvatarFallback;
 	}
 
@@ -371,6 +374,28 @@
 				}
 				await syncProfileAvatar(mySocketId, pseudo);
 				void ensureAvatarForKey(myRemoteKey);
+
+				// Initialisation du gestionnaire d'appels WebRTC
+				callManager = new CallManager(socket, roomId, pseudo ?? '', {
+					onStateChange: (state) => {
+						callState = state;
+						// Notification d'appel entrant
+						if (state.phase === 'incoming') {
+							notifyAndVibrate(
+								`Appel de ${state.peerPseudo ?? 'un participant'}`,
+								{ body: 'Cliquez pour répondre' },
+								[200, 100, 200, 100, 200]
+							);
+						}
+					},
+					onRemoteStream: (stream) => {
+						callPanelRef?.setRemoteStream(stream);
+					},
+					onParticipantsChange: (participants) => {
+						callParticipants = participants;
+					}
+				});
+
 				socket.emit('chat-join-room', { pseudo, roomName: roomId });
 			});
 
@@ -390,11 +415,19 @@
 				'chat-joined-room',
 				(payload: { clients?: Record<string, { pseudo?: string }> }) => {
 					indexClients(payload?.clients);
+					// Mise à jour de la liste des participants pour les appels
+					if (payload?.clients && mySocketId) {
+						callManager?.updateParticipants(payload.clients, mySocketId);
+					}
 				}
 			);
 
 			socket.on('chat-disconnected', (payload: { id?: string; pseudo?: string }) => {
 				dropClient(payload?.id, payload?.pseudo);
+				// Retrait du participant de la liste d'appel
+				if (payload?.id) {
+					callManager?.removeParticipant(payload.id);
+				}
 			});
 
 			socket.on('chat-msg', (msg: ChatMsg) => {
@@ -465,6 +498,8 @@
 	});
 
 	onDestroy(() => {
+		callManager?.destroy();
+		callManager = null;
 		const socket = getSocket();
 		socket.removeAllListeners();
 		socket.disconnect();
@@ -599,6 +634,17 @@
 			</button>
 		</div>
 	</form>
+
+	<!-- Panneau d'appel flottant -->
+	<CallPanel
+		bind:this={callPanelRef}
+		participants={callParticipants}
+		{callState}
+		onCall={(p) => callManager?.call(p)}
+		onAccept={() => callManager?.acceptCall()}
+		onReject={() => callManager?.rejectCall()}
+		onHangup={() => callManager?.hangup()}
+	/>
 
 	{#if pickerOpen}
 		<div class="chat-picker" role="dialog" aria-label="Choisir une image">

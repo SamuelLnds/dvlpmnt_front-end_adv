@@ -3,6 +3,10 @@ import { SvelteKitPWA } from '@vite-pwa/sveltekit';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+	// Polyfill global pour les modules qui en ont besoin
+	define: {
+		global: 'globalThis'
+	},
 	plugins: [
 		sveltekit(),
 		SvelteKitPWA(
