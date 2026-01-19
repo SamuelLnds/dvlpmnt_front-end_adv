@@ -676,6 +676,7 @@
 	.chat-shell {
 		position: relative;
 		gap: clamp(1rem, 2vw, 1.5rem);
+		max-height: 80dvh;
 	}
 
 	.chat-header {
