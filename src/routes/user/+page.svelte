@@ -5,14 +5,20 @@
 		writeProfile,
 		fileToDataURL,
 		type Profile,
+		type Location,
 		PROFILE_KEY,
 		LAST_ROOM_KEY,
 		defaultAvatarDataURL,
+		readLocation,
+		writeLocation,
+		clearLocation,
+		reverseGeocode
 	} from '$lib/storage/profile';
 	import { addPhotoFromDataURL, readPhotos, type PhotoItem } from '$lib/storage/photos';
 	import { resetSocket } from '$lib/socket';
 	import CameraCapture from '$lib/components/CameraCapture.svelte';
 	import { loadingStore } from '$lib/stores/loading';
+	import { MapPin, X } from 'lucide-svelte';
 
 	let profile: Profile = { pseudo: '' };
 	let saved = '';
@@ -21,9 +27,15 @@
 	let showGallery = false;
 	let isDefaultAvatar = false;
 
+	// Géolocalisation
+	let userLocation: Location | null = null;
+	let locationLoading = false;
+	let locationError = '';
+
 	onMount(() => {
 		profile = readProfile();
 		photos = readPhotos();
+		userLocation = readLocation();
 
 		// si pas d'avatar, mettre l'avatar par défaut
 		if (!profile.photoDataUrl) {
@@ -33,6 +45,64 @@
 			});
 		}
 	});
+
+	async function requestGeolocation() {
+		if (!navigator.geolocation) {
+			locationError = 'Géolocalisation non supportée par ce navigateur';
+			return;
+		}
+
+		locationLoading = true;
+		locationError = '';
+
+		try {
+			const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+				navigator.geolocation.getCurrentPosition(resolve, reject, {
+					enableHighAccuracy: false,
+					timeout: 10000,
+					maximumAge: 300000 // 5 minutes de cache
+				});
+			});
+
+			const { latitude, longitude } = position.coords;
+			const geo = await reverseGeocode(latitude, longitude);
+
+			userLocation = {
+				latitude,
+				longitude,
+				city: geo.city,
+				country: geo.country,
+				timestamp: Date.now()
+			};
+
+			writeLocation(userLocation);
+		} catch (err) {
+			if (err instanceof GeolocationPositionError) {
+				switch (err.code) {
+					case err.PERMISSION_DENIED:
+						locationError = 'Permission refusée';
+						break;
+					case err.POSITION_UNAVAILABLE:
+						locationError = 'Position indisponible';
+						break;
+					case err.TIMEOUT:
+						locationError = 'Délai dépassé';
+						break;
+					default:
+						locationError = 'Erreur de géolocalisation';
+				}
+			} else {
+				locationError = 'Erreur de géolocalisation';
+			}
+		} finally {
+			locationLoading = false;
+		}
+	}
+
+	function removeLocation() {
+		clearLocation();
+		userLocation = null;
+	}
 
 	async function onAvatarFile(event: Event) {
 		const input = event.target as HTMLInputElement;
@@ -209,6 +279,35 @@
 			<span class="badge badge--danger">{saved}</span>
 		{/if}
 
+		<!-- Géolocalisation -->
+		<div class="location-info">
+			{#if userLocation && (userLocation.city || userLocation.country)}
+				<div class="location-display">
+					<MapPin class="location-pin" size={16} aria-hidden="true" />
+					<span class="location-text">
+						{#if userLocation.city && userLocation.country}
+							{userLocation.city}, {userLocation.country}
+						{:else if userLocation.city}
+							{userLocation.city}
+						{:else if userLocation.country}
+							{userLocation.country}
+						{/if}
+					</span>
+					<button type="button" class="btn btn--ghost btn--icon btn--tiny" on:click={removeLocation} title="Supprimer la localisation">
+						<X size={14} aria-hidden="true" />
+					</button>
+				</div>
+			{:else}
+				<button type="button" class="btn btn--ghost btn--small" on:click={requestGeolocation} disabled={locationLoading}>
+					<MapPin class="location-pin" size={16} aria-hidden="true" />
+					{locationLoading ? 'Localisation...' : 'Activer la localisation'}
+				</button>
+				{#if locationError}
+					<span class="location-error">{locationError}</span>
+				{/if}
+			{/if}
+		</div>
+
 		<div class="card-actions">
 			<button type="submit" class="btn btn--primary">Enregistrer</button>
 		</div>
@@ -251,6 +350,17 @@
 		padding: 0.35rem 0.65rem;
 	}
 
+	.btn--tiny {
+		padding: 0.2rem;
+		min-width: auto;
+	}
+
+	.btn--icon {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+
 	.profile-panel {
 		display: grid;
 		gap: 0.75rem;
@@ -278,6 +388,41 @@
 		gap: 0.6rem;
 	}
 
+	/* Géolocalisation */
+	.location-info {
+		margin-top: 0.5rem;
+	}
+
+	.location-display {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		color: var(--color-text-muted);
+		font-size: 0.875rem;
+		padding: 0.35rem 0.5rem;
+		background: var(--color-bg-muted);
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+	}
+
+	:global(.location-pin) {
+		flex-shrink: 0;
+		color: var(--color-text-muted);
+		opacity: 0.7;
+	}
+
+	.location-text {
+		color: var(--color-text-muted);
+		font-style: italic;
+	}
+
+	.location-error {
+		display: block;
+		margin-top: 0.35rem;
+		color: var(--color-danger);
+		font-size: 0.8rem;
+	}
+
 	@media (max-width: 960px) {
 		.profile-header {
 			grid-template-columns: 1fr;
@@ -286,6 +431,12 @@
 
 		.profile-preview {
 			justify-items: center;
+		}
+
+		.location-info {
+			display: flex;
+			flex-direction: column;
+			align-items: center;
 		}
 	}
 </style>

@@ -2,6 +2,15 @@ import defaultAvatarUrl from '$lib/assets/default-avatar.png';
 
 export const PROFILE_KEY = 'chat.profile.v1';
 export const LAST_ROOM_KEY = 'chat.lastRoom.v1';
+export const LOCATION_KEY = 'chat.location.v1';
+
+export type Location = {
+	city?: string;
+	country?: string;
+	latitude: number;
+	longitude: number;
+	timestamp: number;
+};
 
 export type Profile = {
 	pseudo: string;
@@ -42,6 +51,55 @@ export function writeLastRoom(room: string) {
 	try {
 		localStorage.setItem(LAST_ROOM_KEY, room);
 	} catch {}
+}
+
+export function readLocation(): Location | null {
+	try {
+		const raw = localStorage.getItem(LOCATION_KEY);
+		if (!raw) return null;
+		const loc = JSON.parse(raw) as Partial<Location>;
+		if (typeof loc.latitude !== 'number' || typeof loc.longitude !== 'number') return null;
+		return {
+			city: typeof loc.city === 'string' ? loc.city : undefined,
+			country: typeof loc.country === 'string' ? loc.country : undefined,
+			latitude: loc.latitude,
+			longitude: loc.longitude,
+			timestamp: typeof loc.timestamp === 'number' ? loc.timestamp : Date.now()
+		};
+	} catch {
+		return null;
+	}
+}
+
+export function writeLocation(loc: Location) {
+	try {
+		localStorage.setItem(LOCATION_KEY, JSON.stringify(loc));
+	} catch {}
+}
+
+export function clearLocation() {
+	try {
+		localStorage.removeItem(LOCATION_KEY);
+	} catch {}
+}
+
+export async function reverseGeocode(lat: number, lon: number): Promise<{ city?: string; country?: string }> {
+	try {
+		// Nominatim OpenStreetMap API permet de convertir lat/lon en ville/pays
+		const res = await fetch(
+			`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`,
+			{ headers: { 'Accept-Language': 'fr' } }
+		);
+		if (!res.ok) return {};
+		const data = await res.json();
+		const addr = data.address || {};
+		return {
+			city: addr.city || addr.town || addr.village || addr.municipality || addr.county,
+			country: addr.country
+		};
+	} catch {
+		return {};
+	}
 }
 
 export function fileToDataURL(file: File): Promise<string> {

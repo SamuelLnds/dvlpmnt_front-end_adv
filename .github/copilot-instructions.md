@@ -2,7 +2,7 @@
 
 ## Architecture Globale
 
-Application **SvelteKit 2 + Svelte 5** (PWA) de chat temps réel avec capture photo. Adapter-node pour déploiement serveur (`node build`).
+Application **SvelteKit 2 + Svelte 5** (PWA) de chat temps réel avec capture photo et appels WebRTC. Adapter-node pour déploiement serveur (`node build`).
 
 ### Structure des Couches
 
@@ -10,25 +10,34 @@ Application **SvelteKit 2 + Svelte 5** (PWA) de chat temps réel avec capture ph
 src/
 ├── lib/
 │   ├── api/          # Clients HTTP (images.ts, rooms.ts) → API REST externe
-│   ├── components/   # Composants réutilisables (Navbar, CameraCapture, Battery)
+│   ├── components/   # Composants réutilisables (Navbar, CameraCapture, Battery, CallPanel, LoadingModal)
 │   ├── storage/      # Persistance localStorage (profile, chat, photos, rooms)
+│   ├── stores/       # Stores Svelte (loading.ts)
 │   ├── socket.ts     # Singleton Socket.IO (getSocket, withSocket, resetSocket)
-│   └── device.ts     # APIs navigateur (vibrate, notifications)
+│   ├── device.ts     # APIs navigateur (vibrate, notifications)
+│   └── webrtc.ts     # Gestion des appels WebRTC (CallManager, CallState)
 └── routes/           # Pages SvelteKit (file-based routing)
+    ├── camera/       # Capture photo locale
+    ├── gallery/      # Galerie photos hors-ligne
+    ├── reception/    # Lobby / sélection de room
+    ├── room/[id]/    # Chat temps réel + appels
+    └── user/         # Profil utilisateur + géolocalisation
 ```
 
 ### Flux de Données
 
 1. **Authentification** : Profil stocké en `localStorage` (`readProfile()` dans [storage/profile.ts](src/lib/storage/profile.ts))
-2. **Rooms** : Fetch API externe → merge avec données locales → localStorage
-3. **Chat temps réel** : Socket.IO via `getSocket()` singleton → événements `message`, `join`, `leave`
-4. **Images** : Upload/fetch via REST API (`/socketio/api/images/`)
+2. **Géolocalisation** : Stockée en `localStorage` (`readLocation()`, `writeLocation()`) avec reverse geocoding via Nominatim
+3. **Rooms** : Fetch API externe → merge avec données locales → localStorage
+4. **Chat temps réel** : Socket.IO via `getSocket()` singleton → événements `message`, `join`, `leave`
+5. **Images** : Upload/fetch via REST API (`/socketio/api/images/`)
+6. **Appels WebRTC** : Signaling via Socket.IO, gestion via `CallManager`
 
 ## Conventions du Projet
 
 ### Svelte 5
 
-- Utiliser `$state()`, `$props()`, `$derived()` (runes Svelte 5)
+- Utiliser `$state()`, `$props()`, `$derived()`, `$effect()` (runes Svelte 5)
 - Export des props avec `export let` uniquement pour les composants legacy
 - Pattern callback : `export let onEvent: () => void = noop;`
 
@@ -37,6 +46,28 @@ src/
 - Types définis localement dans chaque fichier (pas de fichier types centralisé)
 - Guards de type inline : `function isDataUrl(value: unknown): value is string`
 - Assertions avec `as` après validation
+
+### Icônes – Lucide Svelte
+
+**IMPORTANT** : Toujours utiliser les composants **lucide-svelte** pour les icônes. Ne jamais utiliser de SVG inline.
+
+```typescript
+import { MapPin, X, Phone, Menu, Sun, Moon } from 'lucide-svelte';
+```
+
+Usage dans le template :
+```svelte
+<MapPin size={16} class="my-icon" aria-hidden="true" />
+<X size={14} />
+<Phone size={24} stroke-width={2} />
+```
+
+Styliser via `:global()` si nécessaire :
+```css
+:global(.my-icon) {
+  color: var(--color-text-muted);
+}
+```
 
 ### Storage Pattern
 
@@ -83,7 +114,7 @@ npm run format       # Prettier write
 ### CSS
 
 - Variables CSS custom dans [app.css](src/app.css) (thème dark/light)
-- Classes utilitaires : `.surface`, `.stack`, `.card`, `.btn`, `.btn--ghost`
+- Classes utilitaires : `.surface`, `.stack`, `.card`, `.btn`, `.btn--ghost`, `.btn--primary`, `.btn--danger`
 - Thème toggle via `document.documentElement.dataset.theme`
 
 ### Composant CameraCapture
@@ -93,4 +124,21 @@ Interface exposée ([CameraCapture.svelte](src/lib/components/CameraCapture.svel
 camRef.open()    // Ouvrir la caméra
 camRef.capture() // Capturer un frame
 camRef.close()   // Fermer et libérer le stream
+camRef.retake()  // Reprendre une nouvelle photo
+```
+
+### Composant CallPanel
+
+Gestion des appels WebRTC ([CallPanel.svelte](src/lib/components/CallPanel.svelte)) :
+- Affiche la liste des participants
+- Modal plein écran pour appels entrants
+- Bandeau d'appel actif en haut de page
+
+### LoadingModal
+
+Modal de chargement global via store ([LoadingModal.svelte](src/lib/components/LoadingModal.svelte)) :
+```typescript
+import { loadingStore } from '$lib/stores/loading';
+loadingStore.show('Message...');
+loadingStore.hide();
 ```
