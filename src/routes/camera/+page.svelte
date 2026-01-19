@@ -115,7 +115,7 @@
 	<header class="section-title">
 		<div>
 			<div class="eyebrow">Laboratoire</div>
-			<h1>Test caméra & notifications</h1>
+			<h1>Caméra</h1>
 			<p class="muted">Vérifiez la capture locale, les vibrations et la sauvegarde hors ligne.</p>
 		</div>
 	</header>
@@ -140,7 +140,7 @@
 		</button>
 	</div>
 
-	<div class="camera-frame surface surface--muted">
+	<div class="camera-frame card stack">
 		<video bind:this={videoEl} playsinline autoplay class="camera-video">
 			<track kind="captions" src="" srclang="fr" default />
 		</video>

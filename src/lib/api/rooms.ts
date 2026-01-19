@@ -26,6 +26,7 @@ export async function fetchRoomsIndex(): Promise<RoomsIndexItem[]> {
 		const body = (await res.json()) as RoomsResponse;
 		const payload = body?.data ?? {};
 
+		// retourne la liste des salles avec le nombre de clients connectés
 		return Object.entries(payload).map(([id, meta]) => ({
 			id,
 			clientCount:

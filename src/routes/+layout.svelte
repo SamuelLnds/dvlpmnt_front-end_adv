@@ -11,7 +11,7 @@
 
 	const NAV_LINKS: NavLink[] = [
 		{ href: '/', label: 'Accueil', requiresAuth: true },
-		{ href: '/test', label: 'Test', requiresAuth: true },
+		{ href: '/camera', label: 'Caméra', requiresAuth: true },
 		{ href: '/gallery', label: 'Galerie', requiresAuth: true },
 		{ href: '/reception', label: 'Réception', requiresAuth: true },
 		{ href: '/user', label: 'Profil', requiresAuth: true },
