@@ -12,6 +12,7 @@
 	import { addPhotoFromDataURL, readPhotos, type PhotoItem } from '$lib/storage/photos';
 	import { resetSocket } from '$lib/socket';
 	import CameraCapture from '$lib/components/CameraCapture.svelte';
+	import { loadingStore } from '$lib/stores/loading';
 
 	let profile: Profile = { pseudo: '' };
 	let saved = '';
@@ -38,17 +39,27 @@
 		const file = input.files?.[0];
 		if (!file) return;
 
-		profile.photoDataUrl = await fileToDataURL(file);
-		isDefaultAvatar = false;
-		saved = '';
-		addPhotoFromDataURL(profile.photoDataUrl);
-		photos = readPhotos();
+		loadingStore.show('Chargement de l\'image...');
+		try {
+			profile.photoDataUrl = await fileToDataURL(file);
+			isDefaultAvatar = false;
+			saved = '';
+			addPhotoFromDataURL(profile.photoDataUrl);
+			photos = readPhotos();
+		} finally {
+			loadingStore.hide();
+		}
 	}
 
 	async function resetAvatar() {
-		profile.photoDataUrl = await defaultAvatarDataURL();
-		isDefaultAvatar = true;
-		saved = '';
+		loadingStore.show('Réinitialisation...');
+		try {
+			profile.photoDataUrl = await defaultAvatarDataURL();
+			isDefaultAvatar = true;
+			saved = '';
+		} finally {
+			loadingStore.hide();
+		}
 	}
 
 	function pickFromGallery(photo: PhotoItem) {
@@ -67,21 +78,28 @@
 			return;
 		}
 
-		if (!profile.photoDataUrl) {
-			profile.photoDataUrl = await defaultAvatarDataURL();
-			isDefaultAvatar = true;
-		}
+		loadingStore.show('Enregistrement du profil...');
+		try {
+			if (!profile.photoDataUrl) {
+				profile.photoDataUrl = await defaultAvatarDataURL();
+				isDefaultAvatar = true;
+			}
 
-		writeProfile(profile);
-		location.assign('/');
+			writeProfile(profile);
+			location.assign('/');
+		} finally {
+			loadingStore.hide();
+		}
 	}
 
 	async function logout() {
+		loadingStore.show('Déconnexion...');
 		try {
 			localStorage.removeItem(PROFILE_KEY);
 			localStorage.removeItem(LAST_ROOM_KEY);
 		} finally {
 			resetSocket();
+			loadingStore.hide();
 			location.assign('/user');
 		}
 	}

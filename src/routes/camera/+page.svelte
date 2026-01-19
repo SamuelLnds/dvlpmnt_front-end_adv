@@ -9,6 +9,7 @@
 	} from '$lib/storage/photos';
 	import type { PhotoItem } from '$lib/storage/photos';
 	import { notifyAndVibrate } from '$lib/device';
+	import { loadingStore } from '$lib/stores/loading';
 
 	let videoEl: HTMLVideoElement | null = null;
 	let stream: MediaStream | null = null;
@@ -25,6 +26,7 @@
 
 	async function startCamera() {
 		if (stream) return;
+		loadingStore.show('Activation de la caméra...');
 		try {
 			status = "Demande d'autorisation...";
 			stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -35,6 +37,8 @@
 			status = 'Caméra active';
 		} catch (error) {
 			status = `Refusée ou indisponible : ${(error as Error).message}`;
+		} finally {
+			loadingStore.hide();
 		}
 	}
 
@@ -73,25 +77,30 @@
 			return;
 		}
 
-		const canvas = document.createElement('canvas');
-		canvas.width = videoEl.videoWidth;
-		canvas.height = videoEl.videoHeight;
-		const ctx = canvas.getContext('2d')!;
-		ctx.drawImage(videoEl, 0, 0);
+		loadingStore.show('Capture en cours...');
+		try {
+			const canvas = document.createElement('canvas');
+			canvas.width = videoEl.videoWidth;
+			canvas.height = videoEl.videoHeight;
+			const ctx = canvas.getContext('2d')!;
+			ctx.drawImage(videoEl, 0, 0);
 
-		const blob: Blob | null = await new Promise((resolve) =>
-			canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY)
-		);
-		if (!blob) {
-			status = 'Échec de la capture';
-			return;
+			const blob: Blob | null = await new Promise((resolve) =>
+				canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY)
+			);
+			if (!blob) {
+				status = 'Échec de la capture';
+				return;
+			}
+
+			const dataUrl = await dataURLFromBlob(blob);
+			addPhotoFromDataURL(dataUrl);
+			photos = readPhotos();
+			status = 'Photo prise';
+			await notify('taken');
+		} finally {
+			loadingStore.hide();
 		}
-
-		const dataUrl = await dataURLFromBlob(blob);
-		addPhotoFromDataURL(dataUrl);
-		photos = readPhotos();
-		status = 'Photo prise';
-		await notify('taken');
 	}
 
 	function handleDownload(photo: PhotoItem) {

@@ -5,6 +5,7 @@
 	import { page } from '$app/state';
 	import favicon from '$lib/assets/favicon.svg';
 	import Navbar, { type NavLink } from '$lib/components/Navbar.svelte';
+	import LoadingModal from '$lib/components/LoadingModal.svelte';
 	import { readProfile } from '$lib/storage/profile';
 
 	type Theme = 'dark' | 'light';
@@ -96,6 +97,8 @@
 	<link rel="icon" href={favicon} />
 	<!-- <link rel="manifest" href="/manifest.webmanifest" /> -->
 </svelte:head>
+
+<LoadingModal />
 
 <div class="app-shell">
 	<Navbar

@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { readProfile, readLastRoom, writeLastRoom } from '$lib/storage/profile';
 	import { ensureSeed, upsertRoom, type Room } from '$lib/storage/rooms';
+	import { loadingStore } from '$lib/stores/loading';
 
 	let userPseudo = '';
 	let rooms: Room[] = [];
@@ -19,20 +20,27 @@
 
 	async function loadRooms() {
 		roomsLoading = true;
+		loadingStore.show('Chargement des rooms...');
 		try {
 			rooms = await ensureSeed();
 		} finally {
 			roomsLoading = false;
+			loadingStore.hide();
 		}
 	}
 
 	async function joinRoom(id: string, name?: string) {
 		const roomId = (id ?? '').trim();
 		if (!roomId) return;
-		rooms = upsertRoom(roomId, name);
-		writeLastRoom(roomId);
-		lastRoom = roomId;
-		await goto(`/room/${encodeURIComponent(roomId)}`);
+		loadingStore.show('Connexion à la room...');
+		try {
+			rooms = upsertRoom(roomId, name);
+			writeLastRoom(roomId);
+			lastRoom = roomId;
+			await goto(`/room/${encodeURIComponent(roomId)}`);
+		} finally {
+			loadingStore.hide();
+		}
 	}
 
 	function onAddCustom(event: Event) {

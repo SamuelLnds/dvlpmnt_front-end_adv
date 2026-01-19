@@ -2,12 +2,18 @@
 	import { onMount } from 'svelte';
 	import type { PhotoItem } from '$lib/storage/photos';
 	import { readPhotos, removePhotoByTs, downloadPhoto } from '$lib/storage/photos';
+	import { loadingStore } from '$lib/stores/loading';
 
 	let photos: PhotoItem[] = [];
 	let query = '';
 
 	function load() {
-		photos = readPhotos();
+		loadingStore.show('Chargement de la galerie...');
+		try {
+			photos = readPhotos();
+		} finally {
+			loadingStore.hide();
+		}
 	}
 
 	function fmt(timestamp: number) {
@@ -15,11 +21,21 @@
 	}
 
 	function handleDownload(photo: PhotoItem) {
-		downloadPhoto(photo);
+		loadingStore.show('Téléchargement en cours...');
+		try {
+			downloadPhoto(photo);
+		} finally {
+			loadingStore.hide();
+		}
 	}
 
 	function handleDelete(photo: PhotoItem) {
-		photos = removePhotoByTs(photo.ts);
+		loadingStore.show('Suppression en cours...');
+		try {
+			photos = removePhotoByTs(photo.ts);
+		} finally {
+			loadingStore.hide();
+		}
 	}
 
 	$: filtered = query.trim()

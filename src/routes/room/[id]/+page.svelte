@@ -12,6 +12,7 @@
 	import { readPhotos, addPhotoFromDataURL, type PhotoItem } from '$lib/storage/photos';
 
 	import CameraCapture from '$lib/components/CameraCapture.svelte';
+	import { loadingStore } from '$lib/stores/loading';
 	let camRef: InstanceType<typeof CameraCapture> | null = null;
 
 	export let data: PageData;
@@ -295,16 +296,21 @@
 		const file = input.files?.[0];
 		if (!file) return;
 
-		const reader = new FileReader();
-		selectedDataUrl = await new Promise<string>((resolve, reject) => {
-			reader.onload = () => resolve(String(reader.result));
-			reader.onerror = reject;
-			reader.readAsDataURL(file);
-		});
+		loadingStore.show('Chargement de l\'image...');
+		try {
+			const reader = new FileReader();
+			selectedDataUrl = await new Promise<string>((resolve, reject) => {
+				reader.onload = () => resolve(String(reader.result));
+				reader.onerror = reject;
+				reader.readAsDataURL(file);
+			});
 
-		selectedKey = `file:${file.name || Date.now()}`;
-		addPhotoFromDataURL(selectedDataUrl);
-		photos = readPhotos();
+			selectedKey = `file:${file.name || Date.now()}`;
+			addPhotoFromDataURL(selectedDataUrl);
+			photos = readPhotos();
+		} finally {
+			loadingStore.hide();
+		}
 	}
 
 	async function openCameraTab() {
@@ -315,13 +321,21 @@
 
 	function sendSelectedImage() {
 		if (!selectedDataUrl) return;
-		emitMessage(selectedDataUrl);
+		loadingStore.show('Envoi de l\'image...');
+		try {
+			emitMessage(selectedDataUrl);
 
-		// reset
-		selectedDataUrl = null;
-		selectedKey = null;
-		camRef?.close();
-		pickerOpen = false;
+			// reset
+			selectedDataUrl = null;
+			selectedKey = null;
+			camRef?.close();
+			pickerOpen = false;
+		} finally {
+			// Le loading se termine après un petit délai pour que l'utilisateur voie le feedback
+			setTimeout(() => {
+				loadingStore.hide();
+			}, 300);
+		}
 	}
 
 	onMount(() => {
