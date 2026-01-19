@@ -54,9 +54,16 @@
 		return trimmed ? trimmed.toLowerCase() : undefined;
 	}
 
+	function normalizeSenderId(value?: string | null): string | undefined {
+		const raw = (value ?? '').trim();
+		if (!raw) return undefined;
+		const canonical = raw.replace(/[^A-Za-z0-9].*$/, '');
+		return canonical || raw;
+	}
+
 	function remoteImageKey(senderId?: string | null, pseudoRaw?: string | null): string | undefined {
-		const trimmedId = typeof senderId === 'string' ? senderId.trim() : '';
-		if (trimmedId) return trimmedId;
+		const canonicalId = normalizeSenderId(senderId);
+		if (canonicalId) return canonicalId;
 		const pseudoKey = normalizePseudo(pseudoRaw);
 		if (pseudoKey) return `pseudo:${pseudoKey}`;
 		return undefined;
