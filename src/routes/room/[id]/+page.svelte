@@ -564,8 +564,12 @@
 			<p class="muted">En attente de messages.</p>
 		{/if}
 		{#if messages.length > 0}
-			{#each messages as message}
-				<article class="chat-message" data-category={message.categorie ?? 'MESSAGE'}>
+			{#each messages as message, i}
+				{@const isOwnMessage = normalizePseudo(message.pseudo) === username}
+				{@const prevMessage = messages[i - 1]}
+				{@const isSameAuthor = prevMessage && normalizePseudo(prevMessage.pseudo) === normalizePseudo(message.pseudo) && prevMessage.categorie !== 'INFO' && message.categorie !== 'INFO'}
+				<article class="chat-message" class:chat-message--own={isOwnMessage} class:chat-message--grouped={isSameAuthor} data-category={message.categorie ?? 'MESSAGE'}>
+					{#if !isSameAuthor}
 					<header class="chat-message__meta">
 						<img
 							class="chat-message__avatar"
@@ -575,6 +579,9 @@
 							decoding="async"
 						/>
 						<strong class="chat-message__author">{message.pseudo ?? 'client'}</strong>
+						{#if isOwnMessage}
+							<span class="badge badge--own">Vous</span>
+						{/if}
 						<time class="chat-message__time">
 							{message.dateEmis ? new Date(message.dateEmis).toLocaleTimeString() : ''}
 						</time>
@@ -582,6 +589,7 @@
 							<span class="badge badge--warning">{message.categorie}</span>
 						{/if}
 					</header>
+					{/if}
 
 					{#if isImageDataUrl(message.content)}
 						<figure class="chat-message__image">
@@ -802,6 +810,23 @@
 		padding-bottom: 0;
 	}
 
+	/* Messages groupés du même auteur */
+	.chat-message--grouped {
+		padding-top: 0.15rem;
+		border-bottom: none;
+		margin-top: -0.35rem;
+	}
+
+	.chat-message--grouped + .chat-message:not(.chat-message--grouped) {
+		margin-top: 0.5rem;
+	}
+
+	/* Retirer la bordure du message précédent un groupé */
+	.chat-message:has(+ .chat-message--grouped) {
+		border-bottom: none;
+		padding-bottom: 0.15rem;
+	}
+
 	.chat-message__meta {
 		display: flex;
 		align-items: center;
@@ -824,6 +849,45 @@
 	.chat-message__author {
 		color: var(--color-text);
 		font-size: 0.95rem;
+	}
+
+	/* Style pour les messages de l'utilisateur connecté */
+	.chat-message--own {
+		background: var(--color-primary-soft, rgba(99, 102, 241, 0.1));
+		border-radius: var(--radius-md);
+		padding: 0.75rem;
+		border-left: 3px solid var(--color-primary);
+	}
+
+	/* Groupement des messages propres */
+	.chat-message--own.chat-message--grouped {
+		border-radius: 0 0 var(--radius-md) var(--radius-md);
+		margin-top: -0.75rem;
+		padding-top: 0.25rem;
+	}
+
+	.chat-message--own:has(+ .chat-message--own.chat-message--grouped) {
+		border-radius: var(--radius-md) var(--radius-md) 0 0;
+		padding-bottom: 0.25rem;
+	}
+
+	.chat-message--own.chat-message--grouped:has(+ .chat-message--own.chat-message--grouped) {
+		border-radius: 0;
+	}
+
+	.chat-message--own .chat-message__author {
+		color: var(--color-primary);
+	}
+
+	.badge--own {
+		background: var(--color-primary-soft, rgba(99, 102, 241, 0.15));
+		color: var(--color-primary);
+		padding: 0.15rem 0.5rem;
+		border-radius: var(--radius-sm);
+		font-size: 0.75rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
 	}
 
 	.chat-message__text {
