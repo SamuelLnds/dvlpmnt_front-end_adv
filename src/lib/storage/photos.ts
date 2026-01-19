@@ -1,21 +1,17 @@
+import { safeParse } from '$lib/utils/validation';
+import { triggerDownload, blobToDataURL } from '$lib/utils/download';
+
 export const PHOTOS_STORAGE_KEY = 'camera.photos.v1';
 export const MAX_ITEMS = 100;
 
 export type PhotoItem = { dataUrl: string; ts: number };
 
-// Lecture sécurisée depuis localStorage
 export function readPhotos(): PhotoItem[] {
-  try {
-    const raw = localStorage.getItem(PHOTOS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((p) => p && typeof p.dataUrl === 'string' && typeof p.ts === 'number')
-      .slice(0, MAX_ITEMS);
-  } catch {
-    return [];
-  }
+  const parsed = safeParse<unknown[]>(localStorage.getItem(PHOTOS_STORAGE_KEY), []);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((p) => p && typeof (p as PhotoItem).dataUrl === 'string' && typeof (p as PhotoItem).ts === 'number')
+    .slice(0, MAX_ITEMS) as PhotoItem[];
 }
 
 // Écriture sécurisée
@@ -43,20 +39,6 @@ export function removePhotoByTs(ts: number): PhotoItem[] {
   return next;
 }
 
-// Convertir un Blob en Data URL
-export function dataURLFromBlob(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-// Déclencher un téléchargement client depuis une Data URL
-export function downloadPhoto(item: PhotoItem): void {
-  const a = document.createElement('a');
-  a.href = item.dataUrl;
-  a.download = `photo-${item.ts}.jpg`;
-  a.click();
-}
+// Ré-exports pour compatibilité avec le code existant
+export const dataURLFromBlob = blobToDataURL;
+export const downloadPhoto = (item: PhotoItem) => triggerDownload(item, 'photo');

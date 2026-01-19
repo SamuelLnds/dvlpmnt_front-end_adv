@@ -1,4 +1,4 @@
-import { getApiBase } from '$lib/api/images';
+import { apiFetch } from './client';
 
 export type RoomsIndexItem = {
 	id: string;
@@ -11,31 +11,21 @@ type RoomsResponse = {
 };
 
 export async function fetchRoomsIndex(): Promise<RoomsIndexItem[]> {
-	try {
-		const res = await fetch(`${getApiBase()}/rooms`, {
-			method: 'GET',
-			headers: {
-				Accept: 'application/json'
-			}
-		});
+	const response = await apiFetch<RoomsResponse>('/rooms');
 
-		if (!res.ok) {
-			throw new Error(`rooms: unexpected status ${res.status}`);
-		}
-
-		const body = (await res.json()) as RoomsResponse;
-		const payload = body?.data ?? {};
-
-		// retourne la liste des salles avec le nombre de clients connectés
-		return Object.entries(payload).map(([id, meta]) => ({
-			id,
-			clientCount:
-				meta && typeof meta === 'object' && meta.clients && typeof meta.clients === 'object'
-					? Object.keys(meta.clients as Record<string, unknown>).length
-					: 0
-		}));
-	} catch (error) {
+	if (!response.ok) {
+		const error = new Error(`rooms: unexpected status ${response.status}`);
 		console.warn('fetchRoomsIndex failed', error);
 		throw error;
 	}
+
+	const payload = response.data?.data ?? {};
+
+	return Object.entries(payload).map(([id, meta]) => ({
+		id,
+		clientCount:
+			meta && typeof meta === 'object' && meta.clients && typeof meta.clients === 'object'
+				? Object.keys(meta.clients as Record<string, unknown>).length
+				: 0
+	}));
 }

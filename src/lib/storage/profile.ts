@@ -1,4 +1,8 @@
 import defaultAvatarUrl from '$lib/assets/default-avatar.png';
+import { fileToDataURL as _fileToDataURL } from '$lib/utils/download';
+
+// Ré-export pour compatibilité avec le code existant
+export const fileToDataURL = _fileToDataURL;
 
 export const PROFILE_KEY = 'chat.profile.v1';
 export const LAST_ROOM_KEY = 'chat.lastRoom.v1';
@@ -102,22 +106,8 @@ export async function reverseGeocode(lat: number, lon: number): Promise<{ city?:
 	}
 }
 
-export function fileToDataURL(file: File): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const r = new FileReader();
-		r.onload = () => resolve(String(r.result));
-		r.onerror = reject;
-		r.readAsDataURL(file);
-	});
-}
-
 export async function defaultAvatarDataURL(): Promise<string> {
 	const res = await fetch(defaultAvatarUrl);
 	const blob = await res.blob();
-	return await new Promise<string>((resolve, reject) => {
-		const r = new FileReader();
-		r.onload = () => resolve(String(r.result));
-		r.onerror = reject;
-		r.readAsDataURL(blob);
-	});
+	return _fileToDataURL(blob as unknown as File);
 }

@@ -1,5 +1,5 @@
-const API_ORIGIN = 'https://api.tools.gavago.fr';
-const API_BASE = `${API_ORIGIN}/socketio/api`;
+import { apiFetch } from './client';
+import { isDataUrl } from '$lib/utils/validation';
 
 type ImageGetResponse = {
 	success?: boolean;
@@ -10,58 +10,31 @@ type ImagePostResponse = {
 	success?: boolean;
 };
 
-function isDataUrl(value: unknown): value is string {
-	return typeof value === 'string' && value.startsWith('data:image');
-}
-
 export async function fetchUserImage(id: string): Promise<string | null> {
 	if (!id) return null;
-	try {
-		const res = await fetch(`${API_BASE}/images/${encodeURIComponent(id)}`, {
-			method: 'GET',
-			headers: {
-				Accept: 'application/json'
-			}
-		});
 
-		if (!res.ok) {
-			console.warn(`fetchUserImage: unexpected status ${res.status}`);
-			return null;
-		}
+	const response = await apiFetch<ImageGetResponse>(`/images/${encodeURIComponent(id)}`);
 
-		const body = (await res.json()) as ImageGetResponse;
-		return isDataUrl(body.data_image) ? body.data_image : null;
-	} catch (error) {
-		console.warn('fetchUserImage: request failed', error);
+	if (!response.ok) {
+		console.warn(`fetchUserImage: unexpected status ${response.status}`);
 		return null;
 	}
+
+	return isDataUrl(response.data?.data_image) ? response.data!.data_image! : null;
 }
 
 export async function uploadUserImage(id: string, imageData: string): Promise<boolean> {
 	if (!id || !imageData) return false;
-	try {
-		const res = await fetch(`${API_BASE}/images/`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				Accept: 'application/json'
-			},
-			body: JSON.stringify({ id, image_data: imageData })
-		});
 
-		if (!res.ok) {
-			console.warn(`uploadUserImage: unexpected status ${res.status}`);
-			return false;
-		}
+	const response = await apiFetch<ImagePostResponse>('/images/', {
+		method: 'POST',
+		body: { id, image_data: imageData }
+	});
 
-		const body = (await res.json()) as ImagePostResponse;
-		return Boolean(body.success);
-	} catch (error) {
-		console.warn('uploadUserImage: request failed', error);
+	if (!response.ok) {
+		console.warn(`uploadUserImage: unexpected status ${response.status}`);
 		return false;
 	}
-}
 
-export function getApiBase(): string {
-	return API_BASE;
+	return Boolean(response.data?.success);
 }

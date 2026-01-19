@@ -1,11 +1,10 @@
-export const ROOMS_KEY = 'chat.rooms.v1';
-export const MSGS_KEY = 'chat.messages.v1';
+import { safeParse } from '$lib/utils/validation';
+import { readRooms, writeRooms, ROOMS_KEY, type Room } from '$lib/storage/rooms';
 
-export type Room = {
-	id: string;
-	name: string;
-	joined: boolean;
-};
+// Ré-exports pour compatibilité descendante
+export { readRooms, writeRooms, ROOMS_KEY, type Room };
+
+export const MSGS_KEY = 'chat.messages.v1';
 
 export type Message = {
 	id: string;
@@ -15,33 +14,6 @@ export type Message = {
 	attachmentTs?: number;
 	createdAt: string;
 };
-
-// Helpers lecture/écriture génériques
-function safeParse<T>(raw: string | null, fallback: T): T {
-	if (!raw) return fallback;
-	try {
-		return JSON.parse(raw) as T;
-	} catch {
-		return fallback;
-	}
-}
-
-export function readRooms(): Room[] {
-	const rooms = safeParse<Room[]>(localStorage.getItem(ROOMS_KEY), []);
-	// garde-fous
-	return rooms.filter(
-		(r) =>
-			r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.joined === 'boolean'
-	);
-}
-
-export function writeRooms(rooms: Room[]): void {
-	try {
-		localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms));
-	} catch (e) {
-		console.warn('writeRooms() failed:', e);
-	}
-}
 
 export function readMessages(): Message[] {
 	const msgs = safeParse<Message[]>(localStorage.getItem(MSGS_KEY), []);

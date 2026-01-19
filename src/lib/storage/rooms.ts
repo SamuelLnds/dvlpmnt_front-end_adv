@@ -1,6 +1,10 @@
 import { fetchRoomsIndex } from '$lib/api/rooms';
+import { safeParse } from '$lib/utils/validation';
+import { formatRoomName } from '$lib/utils/format';
+import { mergeRemoteWithStored, type Room } from '$lib/utils/merge';
 
-export type Room = { id: string; name: string; joined: boolean };
+// Ré-export du type pour compatibilité
+export type { Room };
 
 export const ROOMS_KEY = 'chat.rooms.v1';
 
@@ -11,41 +15,6 @@ const PRESET_ROOMS: Room[] = [
 ];
 
 const DEFAULT_JOINED_IDS = new Set(['general', 'random']);
-
-function safeParse<T>(raw: string | null, fallback: T): T {
-	if (!raw) return fallback;
-	try {
-		return JSON.parse(raw) as T;
-	} catch {
-		return fallback;
-	}
-}
-
-function formatRoomName(source: string): string {
-	const cleaned = source.replace(/[-_]+/g, ' ').trim();
-	if (!cleaned) return source;
-	return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-}
-
-function mergeRemoteWithStored(remoteIds: string[], stored: Room[]): Room[] {
-	const storedById = new Map(stored.map((room) => [room.id, room]));
-
-	const remoteRooms = remoteIds.map((id) => {
-		const storedRoom = storedById.get(id);
-		const storedName = storedRoom?.name;
-		const storedJoined = storedRoom?.joined;
-		return {
-			id,
-			name: storedName && storedName.trim().length > 0 ? storedName : formatRoomName(id),
-			joined: storedJoined ?? DEFAULT_JOINED_IDS.has(id)
-		};
-	});
-
-	const remoteSet = new Set(remoteIds);
-	const customRooms = stored.filter((room) => !remoteSet.has(room.id));
-
-	return [...remoteRooms, ...customRooms];
-}
 
 export function readRooms(): Room[] {
 	const rooms = safeParse<Room[]>(localStorage.getItem(ROOMS_KEY), []);

@@ -15,7 +15,7 @@
 		reverseGeocode
 	} from '$lib/storage/profile';
 	import { addPhotoFromDataURL, readPhotos, type PhotoItem } from '$lib/storage/photos';
-	import { resetSocket } from '$lib/socket';
+	import { resetSocket } from '$lib/services/socket';
 	import CameraCapture from '$lib/components/CameraCapture.svelte';
 	import { loadingStore } from '$lib/stores/loading';
 	import { MapPin, X } from 'lucide-svelte';

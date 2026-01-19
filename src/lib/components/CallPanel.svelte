@@ -4,7 +4,7 @@
 	 * Affiche la liste des participants et permet d'initier/recevoir des appels.
 	 */
 	import { Phone, PhoneOff, PhoneIncoming, PhoneOutgoing, Users, X, User } from 'lucide-svelte';
-	import type { CallState, Participant } from '$lib/webrtc';
+	import type { CallState, Participant } from '$lib/services/webrtc';
 
 	// Props avec runes Svelte 5
 	let {

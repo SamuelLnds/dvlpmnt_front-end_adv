@@ -4,17 +4,17 @@
 	import type { PageData as OriginalPageData } from './$types';
 	type PageData = OriginalPageData & { roomId: string };
 
-	import { getSocket, resetSocket, withSocket } from '$lib/socket';
+	import { getSocket, resetSocket, withSocket } from '$lib/services/socket';
 	import { readProfile, defaultAvatarDataURL } from '$lib/storage/profile';
 	import { fetchUserImage, uploadUserImage } from '$lib/api/images';
 	import defaultAvatarUrl from '$lib/assets/default-avatar.png';
-	import { notifyAndVibrate } from '$lib/device';
+	import { notifyAndVibrate } from '$lib/services/device';
 	import { readPhotos, addPhotoFromDataURL, type PhotoItem } from '$lib/storage/photos';
 
 	import CameraCapture from '$lib/components/CameraCapture.svelte';
 	import CallPanel from '$lib/components/CallPanel.svelte';
 	import { loadingStore } from '$lib/stores/loading';
-	import { CallManager, type CallState, type Participant } from '$lib/webrtc';
+	import { CallManager, type CallState, type Participant } from '$lib/services/webrtc';
 	let camRef: InstanceType<typeof CameraCapture> | null = null;
 	let callPanelRef: { setRemoteStream: (stream: MediaStream | null) => void } | null = null;
 

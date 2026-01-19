@@ -8,7 +8,7 @@
 		downloadPhoto,
 	} from '$lib/storage/photos';
 	import type { PhotoItem } from '$lib/storage/photos';
-	import { notifyAndVibrate } from '$lib/device';
+	import { notifyAndVibrate } from '$lib/services/device';
 	import { loadingStore } from '$lib/stores/loading';
 
 	let videoEl: HTMLVideoElement | null = null;

@@ -4,34 +4,75 @@
 
 Application **SvelteKit 2 + Svelte 5** (PWA) de chat temps réel avec capture photo et appels WebRTC. Adapter-node pour déploiement serveur (`node build`).
 
+**Stack technique** : SvelteKit 2, Svelte 5, TypeScript, Socket.IO, WebRTC, Vitest (144 tests, 99%+ coverage)
+
 ### Structure des Couches
 
 ```
 src/
 ├── lib/
-│   ├── api/          # Clients HTTP (images.ts, rooms.ts) → API REST externe
-│   ├── components/   # Composants réutilisables (Navbar, CameraCapture, Battery, CallPanel, LoadingModal)
-│   ├── storage/      # Persistance localStorage (profile, chat, photos, rooms)
-│   ├── stores/       # Stores Svelte (loading.ts)
-│   ├── socket.ts     # Singleton Socket.IO (getSocket, withSocket, resetSocket)
-│   ├── device.ts     # APIs navigateur (vibrate, notifications)
-│   └── webrtc.ts     # Gestion des appels WebRTC (CallManager, CallState)
+│   ├── api/          # Clients HTTP pour API REST externe
+│   │   ├── client.ts      # Client HTTP générique (apiFetch, API_BASE)
+│   │   ├── images.ts      # Upload/fetch d'images utilisateur
+│   │   └── rooms.ts       # Index des rooms disponibles
+│   ├── services/     # Services navigateur et temps réel
+│   │   ├── device.ts      # APIs navigateur (vibrate, notifications)
+│   │   ├── socket.ts      # Singleton Socket.IO (getSocket, withSocket, resetSocket)
+│   │   ├── webrtc.ts      # Gestion appels WebRTC (CallManager, CallState)
+│   │   └── index.ts       # Barrel exports
+│   ├── storage/      # Persistance localStorage
+│   │   ├── profile.ts     # Profil utilisateur + géolocalisation
+│   │   ├── photos.ts      # Galerie photos locales
+│   │   ├── rooms.ts       # Rooms + préférences (source unique type Room)
+│   │   └── chat.ts        # Messages + helpers (importe Room depuis rooms.ts)
+│   ├── utils/        # Fonctions pures et validations
+│   │   ├── validation.ts  # safeParse, isDataUrl
+│   │   ├── format.ts      # formatRoomName
+│   │   ├── merge.ts       # mergeRemoteWithStored, type Room
+│   │   └── download.ts    # triggerDownload, blobToDataURL, fileToDataURL
+│   ├── stores/       # Stores Svelte réactifs
+│   │   └── loading.ts     # Store global de chargement
+│   ├── components/   # Composants réutilisables
+│   │   ├── Navbar.svelte        # Navigation + thème toggle
+│   │   ├── CameraCapture.svelte # Capture photo (API MediaDevices)
+│   │   ├── Battery.svelte       # Indicateur batterie
+│   │   ├── CallPanel.svelte     # Interface d'appels WebRTC
+│   │   └── LoadingModal.svelte  # Modal de chargement global
+│   └── index.ts      # Barrel exports pour lib/ (tous les modules)
 └── routes/           # Pages SvelteKit (file-based routing)
     ├── camera/       # Capture photo locale
     ├── gallery/      # Galerie photos hors-ligne
     ├── reception/    # Lobby / sélection de room
-    ├── room/[id]/    # Chat temps réel + appels
+    ├── room/[id]/    # Chat temps réel + appels WebRTC
     └── user/         # Profil utilisateur + géolocalisation
 ```
 
 ### Flux de Données
 
-1. **Authentification** : Profil stocké en `localStorage` (`readProfile()` dans [storage/profile.ts](src/lib/storage/profile.ts))
+1. **Authentification** : Profil stocké en `localStorage` (`readProfile()` dans `storage/profile.ts`)
 2. **Géolocalisation** : Stockée en `localStorage` (`readLocation()`, `writeLocation()`) avec reverse geocoding via Nominatim
-3. **Rooms** : Fetch API externe → merge avec données locales → localStorage
-4. **Chat temps réel** : Socket.IO via `getSocket()` singleton → événements `message`, `join`, `leave`
-5. **Images** : Upload/fetch via REST API (`/socketio/api/images/`)
-6. **Appels WebRTC** : Signaling via Socket.IO, gestion via `CallManager`
+3. **Rooms** : Fetch API externe via `api/rooms.ts` → merge via `utils/merge.ts` → localStorage (`storage/rooms.ts`)
+4. **Chat temps réel** : Socket.IO via `getSocket()` singleton (`services/socket.ts`) → événements `message`, `join`, `leave`
+5. **Images** : Upload/fetch via `api/images.ts` → utilise `api/client.ts` (`apiFetch<T>()`) → REST API externe
+6. **Appels WebRTC** : Signaling via Socket.IO, gestion via `CallManager` (`services/webrtc.ts`)
+
+### Principes de Conception
+
+**Découplage** :
+- API HTTP centralisée dans `api/client.ts` avec fonction générique `apiFetch<T>()`
+- Services navigateur isolés dans `lib/services/`
+- Types partagés définis dans `utils/` (ex: `Room` dans `merge.ts`)
+- Ré-exports via barrel files (`lib/index.ts`, `lib/services/index.ts`)
+
+**Testabilité** :
+- Fonctions pures dans `utils/` (testables indépendamment)
+- 144 tests unitaires (Vitest), 99%+ coverage
+- Mocks localStorage via `vi.stubGlobal()` dans les tests
+
+**Persistence** :
+- Pattern uniforme : `read*()` / `write*()` avec validation via `safeParse()`
+- Gestion d'erreurs silencieuse (try/catch avec console.warn)
+- Clés versionnées : `chat.<domain>.v1`
 
 ## Conventions du Projet
 
@@ -51,45 +92,205 @@ src/
 
 **IMPORTANT** : Toujours utiliser les composants **lucide-svelte** pour les icônes. Ne jamais utiliser de SVG inline.
 
+```tAPI HTTP Pattern
+
+Client générique dans `api/client.ts` :
 ```typescript
-import { MapPin, X, Phone, Menu, Sun, Moon } from 'lucide-svelte';
-```
+import { apiFetch, API_BASE, API_ORIGIN } from '$lib/api/client';
 
-Usage dans le template :
-```svelte
-<MapPin size={16} class="my-icon" aria-hidden="true" />
-<X size={14} />
-<Phone size={24} stroke-width={2} />
-```
-
-Styliser via `:global()` si nécessaire :
-```css
-:global(.my-icon) {
-  color: var(--color-text-muted);
+// GET request
+const response = await apiFetch<DataType>('/endpoint');
+if (response.ok) {
+  const data = response.data; // type-safe
 }
+
+// POST request
+const response = await apiFetch<ResponseType>('/endpoint', {
+  method: 'POST',
+  body: { key: 'value' }
+});
 ```
+
+**Avantages** :
+- Typage générique `apiFetch<T>()` pour responses type-safe
+- Gestion centralisée des erreurs (status 0 pour erreurs réseau)
+- Headers par défaut (Accept, Content-Type)
+- Encapsulation de `fetch()` native
 
 ### Storage Pattern
 
-Toutes les fonctions de stockage suivent ce modèle ([storage/chat.ts](src/lib/storage/chat.ts)) :
+Toutes les fonctions de stockage suivent ce modèle (`storage/chat.ts`, `storage/rooms.ts`, etc.) :
 ```typescript
 export const KEY = 'chat.<domain>.v1';
-export function read<T>(): T { /* safeParse + validation */ }
-export function write<T>(data: T): void { /* try/catch silencieux */ }
+
+export function read<T>(): T {
+  const data = safeParse<T>(localStorage.getItem(KEY), defaultValue);
+  // Validation des champs requis
+  return data.filter(item => /* validation */);
+}
+
+export function write<T>(data: T): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(data));
+  } catch (e) { (SvelteKit + PWA)
+npm run start        # Lancer le build (node build)
+npm run check        # Vérification TypeScript + Svelte
+npm run format       # Prettier write
+npm run test         # Lancer les tests Vitest (watch mode)
+npm run test -- --run # Tests en mode CI (sans watch)
 ```
 
-### Socket.IO
+## Tests
 
-Singleton paresseux dans [socket.ts](src/lib/socket.ts). Toujours utiliser :
+**Configuration** (définie dans `api/client.ts`) :
+- `API_ORIGIN` : `https://api.tools.gavago.fr`
+- `API_BASE` : `${API_ORIGIN}/socketio/api`
+- Socket.IO path : `/socket.io`
+
+**Endpoints disponibles** :
+- `GET /images/{id}` : Récupérer photo utilisateur (data URL base64)
+- `POST /images/` : Upload photo utilisateur
+- `GET /rooms` : Index des rooms avec nombre de clients connectés
+
+**Utilisation** :
 ```typescript
+import { apiFetch } from '$lib/api/client';
+// Toujours utiliser apiFetch() au lieu de fetch() direct
+const response = await apiFetch<ResponseType>('/endpoint');
+``
+- Tests co-localisés : `*.test.ts` à côté des fichiers sources
+- 144 tests unitaires, 99%+ coverage
+- Setup global dans `src/tests/setup.ts`
+
+**Conventions de test** :
+```typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+describe('nomDuModule', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal('fetch', vi.fn()); // Mock fetch si nécessaire
+  });
+
+  it('décrit le comportement attendu', () => {
+    // Arrange
+    const input = 'test';
+    
+    // Act
+    const result = maFonction(input);
+    
+    // Assert
+    expect(result).toBe('expected');
+  });
+});
+```
+
+**Mocks courants** :
+- `vi.stubGlobal('localStorage', mockLocalStorage)` pour localStorage
+- `vi.mock('socket.io-client')` pour Socket.IO
+- `vi.mocked(fetch).mockResolvedValue()` pour fetch
+
+**Conventions** :
+- Clés versionnées : `chat.<domain>.v1`, `camera.photos.v1`
+- Validation stricte en lecture (filtrage des données invalides)
+- Gestion d'erreurs en écriture (QuotaExceededError, etc.)
+- Utiliser `safeParse()` de `utils/validation.ts`
+
+### Socket.IO Pattern
+
+Singleton paresseux dans `services/socket.ts`. Toujours utiliser :
+```typescript
+import { getSocket, resetSocket } from '$lib/services/socket';
+
 const socket = getSocket();
 socket.connect(); // connexion manuelle (autoConnect: false)
+
+// Écouter des événements
+socket.on('event', (data) => { /* handler */ });
+
+// Nettoyer au démontage du composant
+onDestroy(() => {
+  resetSocket(); // Supprime tous les listeners et déconnecte
+});
 ```
-Appeler `resetSocket()` au démontage pour nettoyer les listeners.
 
-## Commandes de Développement
+**Important** : `re`lib/components/CameraCapture.svelte`) :
+```typescript
+let camRef: InstanceType<typeof CameraCapture> | null = null;
 
-```bash
+camRef.open()    // Ouvrir la caméra (MediaDevices API)
+camRef.capture() // Capturer un frame (canvas → data URL)
+camRef.close()   // Fermer et libérer le stream
+camRef.retake()  // Reprendre une nouvelle photo
+```
+
+**Usage** :
+```svelte
+<CameraCapture bind:this={camRef} onCapture={handlePhoto} />
+```
+
+### Composant CallPanel
+
+Gestion des appels WebRTC (`lib/components/CallPanel.svelte`) :
+- Affiche la liste des participants dans la room
+- Modal plein écran pour appels entrants
+- Bandeau d'appel actif en haut de page
+- Gestion du flux audio distant
+
+**Props** :
+```typescript
+{
+  participants: Participant[];
+  callState: CallState;
+  onCall: (p: Participant) => void;
+  onAccept: () => void;
+  onReject: () => void;
+  onHangup: () => void;
+}
+```
+
+### LoadingModal
+
+Modal de chargement global via store (`lib/components/LoadingModal.svelte`) :
+```typescript
+import { loadingStore } from '$lib/stores/loading';
+
+// Afficher le modal
+loadingStore.show('Chargement en cours...');
+
+// Masquer le modal
+loadingStore.hide();
+```
+
+**Usage pattern** :
+```typescript
+async function fetchData() {
+  loadingStore.show('Récupération des données...');
+  try {
+    await apiFetch('/endpoint');
+  } finally {
+    loadingStore.hide(); // Toujours dans finally
+  }
+}
+```
+
+## Imports et Barrel Exports
+
+**Privilégier les barrel exports** pour des imports propres :
+
+```typescript
+// ✅ Bon - Via barrel export
+import { getSocket, resetSocket } from '$lib/services';
+import { apiFetch, API_BASE } from '$lib/api/client';
+import { readProfile, writeProfile } from '$lib/storage/profile';
+
+// ❌ À éviter - Import direct (sauf si nécessaire)
+import { getSocket } from '$lib/services/socket';
+```
+
+**Fichiers barrel disponibles** :
+- `$lib/index.ts` : Tous les exports de lib/
+- `$lib/services/index.ts` : device, socket, webrtcbash
 npm run dev          # Serveur dev Vite (HMR)
 npm run build        # Build production
 npm run start        # Lancer le build (node build)
@@ -142,3 +343,35 @@ import { loadingStore } from '$lib/stores/loading';
 loadingStore.show('Message...');
 loadingStore.hide();
 ```
+
+## Synchronisation automatique des instructions avec le repo (anti-obsolescence)
+
+**Règle impérative** : à chaque fois qu’un changement touche l’arborescence (ajout/suppression de fichier, renommage, déplacement, création de dossier, changement d’exports “barrel”, modification de routes SvelteKit), Copilot doit **mettre à jour ses propres hypothèses** avant de proposer une solution.
+
+### Déclencheurs obligatoires (tu DOIS revalider)
+- Fichier ajouté/supprimé/déplacé/renommé dans `src/`
+- Nouveau module dans `lib/api/`, `lib/services/`, `lib/storage/`, `lib/utils/`, `lib/components/`, `lib/stores/`
+- Changement de routing dans `src/routes/` (nouveau dossier, nouveau `+page.*`, `+layout.*`, `[param]`, etc.)
+- Modification de `src/lib/index.ts` ou `src/lib/services/index.ts` (barrel exports)
+- Introduction d’un nouveau type partagé (ex: `Room`) ou déplacement de sa “source unique”
+- Refactor d’un singleton (ex: `services/socket.ts`) ou d’un manager (ex: `services/webrtc.ts`)
+
+### Procédure de re-synchronisation (avant toute réponse “définitive”)
+1. **Re-lire l’arborescence actuelle** pertinente (au minimum : le dossier concerné + ses imports directs).
+2. **Vérifier les exports** : si un import passe par `$lib` ou un barrel, confirmer que l’export existe toujours et pointe vers le bon fichier.
+3. **Vérifier la “source de vérité” des types** (ex: `Room`) : ne jamais dupliquer un type si le projet a un emplacement déclaré comme unique.
+4. **Comparer avec les instructions** : si divergence, **corriger la solution proposée** pour coller au repo, et **mettre à jour la section “Structure / Conventions”** dans ta réponse (en listant précisément ce qui change : fichier, chemin, export).
+5. Si une info manque (ex: tu ne vois pas le repo), tu dois **poser des hypothèses minimales** et **expliciter exactement ce que tu dois vérifier** (fichier(s) et symbole(s)) avant que le changement soit intégré.
+
+### Interdictions anti-dette technique
+- Ne jamais inventer un chemin de fichier ou un export “barrel” : si non vérifié, traiter comme **incertain**.
+- Ne jamais conserver une instruction obsolète : si un fichier cité n’existe plus, **réécrire** l’instruction avec le nouveau chemin.
+- Ne jamais créer un nouveau fichier “types centralisés” si les conventions disent l’inverse.
+- Ne jamais contourner `apiFetch()` par `fetch()` direct, sauf exception explicitement justifiée et localisée.
+
+### Sortie attendue après changement de structure
+Quand une modification structurelle est détectée, **ta réponse doit inclure** un mini “patch mental” :
+- *Nouveaux chemins / fichiers* (liste courte)
+- *Imports corrigés* (ce qui change entre ancien et nouveau)
+- *Impact sur conventions* (barrel exports, types, storage pattern, etc.)
+- *Action de test* à exécuter (ex: `npm run check` + tests ciblés)

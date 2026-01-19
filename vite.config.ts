@@ -1,6 +1,6 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { SvelteKitPWA } from '@vite-pwa/sveltekit';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
 	// Polyfill global pour les modules qui en ont besoin
@@ -35,5 +35,11 @@ export default defineConfig({
 				}
 			}
 		)
-	]
+	],
+	test: {
+		include: ['src/**/*.{test,spec}.{js,ts}'],
+		environment: 'jsdom',
+		globals: true,
+		setupFiles: ['./src/tests/setup.ts']
+	}
 });
