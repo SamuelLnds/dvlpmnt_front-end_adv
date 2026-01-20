@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
+	import { browser } from '$app/environment';
 	import { ChevronDown, Image as ImageIcon, X, Users } from 'lucide-svelte';
 	import type { PageData as OriginalPageData } from './$types';
 	type PageData = OriginalPageData & { roomId: string };
@@ -480,6 +481,7 @@
 	});
 
 	onDestroy(() => {
+		if (!browser) return;
 		// Retirer le gestionnaire beforeunload
 		window.removeEventListener('beforeunload', handleBeforeUnload);
 		// Déconnexion du socket
