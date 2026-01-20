@@ -814,9 +814,45 @@ describe('ConferenceManager', () => {
 				timestamp: new Date().toISOString()
 			}));
 
-			// La conf devrait se terminer (dernier participant)
+			// Je reste dans la conférence en tant que dernier participant
+			// La conf ne se termine que si 0 participant
 			const state = manager.getState();
+			expect(state.phase).toBe('joined');
+			expect(state.participants).toContain('my-socket-id');
+			expect(state.participants).toHaveLength(1);
+		});
+
+		it('should end conference only when zero participants remain', async () => {
+			// Simuler une conférence où on n'est pas participant mais qu'on observe
+			manager.setActiveConference('other-conf', ['other-1', 'other-2']);
+
+			// other-1 quitte, il reste other-2
+			socket._trigger('peer-signal', createAnnouncementSignal('other-1', {
+				type: 'conference-left',
+				conferenceId: 'other-conf',
+				participantId: 'other-1',
+				participantPseudo: 'User1',
+				participants: ['other-2'],
+				timestamp: new Date().toISOString()
+			}));
+
+			let state = manager.getState();
+			expect(state.phase).toBe('active_not_joined');
+			expect(state.participants).toEqual(['other-2']);
+
+			// other-2 quitte aussi, plus personne
+			socket._trigger('peer-signal', createAnnouncementSignal('other-2', {
+				type: 'conference-left',
+				conferenceId: 'other-conf',
+				participantId: 'other-2',
+				participantPseudo: 'User2',
+				participants: [],
+				timestamp: new Date().toISOString()
+			}));
+
+			state = manager.getState();
 			expect(state.phase).toBe('idle');
+			expect(state.conferenceId).toBeNull();
 		});
 
 		it('should remove participant from conference when disconnected', async () => {

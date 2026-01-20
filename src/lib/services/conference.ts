@@ -59,6 +59,12 @@ const ICE_SERVERS: RTCIceServer[] = [
 	{ urls: 'stun:stun1.l.google.com:19302' }
 ];
 
+// Logger pour le debug - mettre DEBUG à true pour activer les logs détaillés
+const DEBUG = false;
+function log(...args: unknown[]): void {
+	if (DEBUG) console.log('[Conference]', ...args);
+}
+
 // Types de signaux envoyés via peer-signal
 type SignalType = 'webrtc' | 'announcement' | 'state-request' | 'state-response';
 
@@ -158,7 +164,11 @@ export class ConferenceManager {
 	private setupSocketListeners(): void {
 		// Tout passe par peer-signal : WebRTC, annonces, et demandes d'état
 		this.socket.on('peer-signal', (data: { id: string; signal: unknown; roomName: string }) => {
-			if (data.roomName !== this.roomName) return;
+			log('Received peer-signal:', { from: data.id, roomName: data.roomName, signal: data.signal });
+			if (data.roomName !== this.roomName) {
+				log('Ignoring signal for different room:', data.roomName, '!==', this.roomName);
+				return;
+			}
 			this.handlePeerSignal(data);
 		});
 	}
@@ -171,7 +181,12 @@ export class ConferenceManager {
 		const fromId = data.id;
 
 		// Ignorer ses propres signaux
-		if (fromId === this.mySocketId) return;
+		if (fromId === this.mySocketId) {
+			log('Ignoring own signal');
+			return;
+		}
+
+		log('Processing signal:', signal.signalType, 'from:', fromId, 'current phase:', this.currentState.phase);
 
 		switch (signal.signalType) {
 			case 'webrtc':
@@ -216,6 +231,7 @@ export class ConferenceManager {
 	 * Envoie un signal via peer-signal vers un destinataire spécifique.
 	 */
 	private sendSignal(toId: string, signal: ConferenceSignal): void {
+		log('Sending signal:', signal.signalType, 'to:', toId);
 		this.socket.emit('peer-signal', {
 			id: toId,
 			signal,
@@ -227,10 +243,15 @@ export class ConferenceManager {
 	 * Envoie un signal à tous les participants de la room (broadcast manuel).
 	 */
 	private broadcastSignal(signal: ConferenceSignal): void {
-		for (const [participantId] of this.roomParticipants) {
-			if (participantId !== this.mySocketId) {
-				this.sendSignal(participantId, signal);
-			}
+		const recipients = Array.from(this.roomParticipants.keys()).filter(id => id !== this.mySocketId);
+		log('Broadcasting signal:', signal.signalType, 'to', recipients.length, 'recipients:', recipients);
+		
+		if (recipients.length === 0) {
+			log('WARNING: No recipients for broadcast! roomParticipants:', Array.from(this.roomParticipants.entries()));
+		}
+		
+		for (const participantId of recipients) {
+			this.sendSignal(participantId, signal);
 		}
 	}
 
@@ -256,7 +277,11 @@ export class ConferenceManager {
 	 * Répond à une demande d'état de conférence (si on est dans la conf).
 	 */
 	private handleStateRequest(fromId: string): void {
-		if (this.currentState.phase !== 'joined' || !this.currentState.conferenceId) return;
+		log('State request from:', fromId, 'my phase:', this.currentState.phase);
+		if (this.currentState.phase !== 'joined' || !this.currentState.conferenceId) {
+			log('Not responding to state request (not joined or no conferenceId)');
+			return;
+		}
 
 		// On est dans la conférence, répondre avec l'état actuel
 		this.sendSignal(fromId, {
@@ -270,8 +295,15 @@ export class ConferenceManager {
 	 * Traite une réponse d'état de conférence.
 	 */
 	private handleStateResponse(signal: ConferenceSignal): void {
-		if (this.currentState.phase !== 'idle') return; // On a déjà l'info
-		if (!signal.conferenceId || !signal.participants) return;
+		log('State response received:', { conferenceId: signal.conferenceId, participants: signal.participants });
+		if (this.currentState.phase !== 'idle') {
+			log('Ignoring state response (not idle, phase:', this.currentState.phase, ')');
+			return;
+		}
+		if (!signal.conferenceId || !signal.participants) {
+			log('Ignoring invalid state response');
+			return;
+		}
 
 		// Une conférence est en cours
 		this.updateState({
@@ -287,8 +319,13 @@ export class ConferenceManager {
 	 * À appeler après avoir rejoint la room.
 	 */
 	requestConferenceState(): void {
-		if (this.currentState.phase !== 'idle') return;
+		log('requestConferenceState called, phase:', this.currentState.phase, 'mySocketId:', this.mySocketId);
+		if (this.currentState.phase !== 'idle') {
+			log('Not requesting state (not idle)');
+			return;
+		}
 
+		log('Broadcasting state-request to room');
 		this.broadcastSignal({
 			signalType: 'state-request',
 			fromId: this.mySocketId
@@ -296,13 +333,16 @@ export class ConferenceManager {
 	}
 
 	private handleConferenceAnnouncement(data: ConferenceAnnouncement): void {
+		log('Conference announcement received:', data.type, 'conferenceId:', data.conferenceId, 'from:', data.participantId);
 		// Notifier le composant parent pour affichage dans le chat
 		this.onAnnouncement(data);
 
 		switch (data.type) {
 			case 'conference-started':
-				// Une nouvelle conférence démarre
-				if (this.currentState.phase === 'idle') {
+				log('conference-started: current phase:', this.currentState.phase);
+				// Une nouvelle conférence démarre - on peut la voir même si on est déjà active_not_joined
+				if (this.currentState.phase === 'idle' || this.currentState.phase === 'active_not_joined') {
+					log('Transitioning to active_not_joined for conference:', data.conferenceId);
 					this.updateState({
 						phase: 'active_not_joined',
 						conferenceId: data.conferenceId,
@@ -312,8 +352,10 @@ export class ConferenceManager {
 				break;
 
 			case 'conference-ended':
+				log('conference-ended: current conferenceId:', this.currentState.conferenceId, 'received:', data.conferenceId);
 				// La conférence se termine
 				if (this.currentState.conferenceId === data.conferenceId) {
+					log('Cleaning up and transitioning to idle');
 					this.cleanupAllPeers();
 					this.updateState({
 						phase: 'idle',
@@ -324,21 +366,33 @@ export class ConferenceManager {
 				break;
 
 			case 'conference-joined':
+				log('conference-joined:', data.participantId, 'current conferenceId:', this.currentState.conferenceId);
 				// Un participant rejoint
 				if (this.currentState.conferenceId === data.conferenceId) {
 					const newParticipants = [...new Set([...this.currentState.participants, data.participantId])];
+					log('Updated participants:', newParticipants);
 					this.updateState({
 						...this.currentState,
 						participants: newParticipants
 					});
 					// Si on est dans la conf, établir une connexion avec le nouveau
 					if (this.currentState.phase === 'joined' && data.participantId !== this.mySocketId) {
+						log('Creating peer connection with new participant:', data.participantId);
 						this.createPeerConnection(data.participantId, true);
 					}
+				} else if (this.currentState.phase === 'idle') {
+					// Si on est idle et qu'on reçoit un conference-joined, c'est qu'une conf existe
+					log('Discovered conference via conference-joined:', data.conferenceId);
+					this.updateState({
+						phase: 'active_not_joined',
+						conferenceId: data.conferenceId,
+						participants: data.participants
+					});
 				}
 				break;
 
 			case 'conference-left':
+				log('conference-left:', data.participantId, 'remaining:', data.participants);
 				// Un participant quitte
 				if (this.currentState.conferenceId === data.conferenceId) {
 					const remainingParticipants = this.currentState.participants.filter(
@@ -348,16 +402,29 @@ export class ConferenceManager {
 					// Nettoyer la connexion peer
 					this.closePeerConnection(data.participantId);
 					
-					// Si plus aucun participant (hors moi), la conf est terminée
-					if (remainingParticipants.length === 0 || 
-						(remainingParticipants.length === 1 && remainingParticipants[0] === this.mySocketId)) {
+					// La conf se termine uniquement si 0 participant restant (pas moi-même)
+					// Si je suis le seul restant ET que je suis dans la conf, je reste joined
+					const othersInConf = remainingParticipants.filter(p => p !== this.mySocketId);
+					log('Others in conf:', othersInConf.length, 'I am joined:', this.currentState.phase === 'joined');
+					
+					if (remainingParticipants.length === 0) {
+						// Plus personne dans la conf
+						log('No participants left, ending conference');
 						this.cleanupAllPeers();
 						this.updateState({
 							phase: 'idle',
 							conferenceId: null,
 							participants: []
 						});
+					} else if (remainingParticipants.length === 1 && remainingParticipants[0] === this.mySocketId) {
+						// Je suis le seul restant - je reste dans la conf mais seul
+						log('I am the only one left, staying in conference');
+						this.updateState({
+							...this.currentState,
+							participants: remainingParticipants
+						});
 					} else {
+						log('Conference continues with', remainingParticipants.length, 'participants');
 						this.updateState({
 							...this.currentState,
 							participants: remainingParticipants
@@ -378,7 +445,9 @@ export class ConferenceManager {
 	 * Démarre une nouvelle conférence ou rejoint une existante.
 	 */
 	async startOrJoinConference(): Promise<void> {
+		log('startOrJoinConference called, phase:', this.currentState.phase, 'mySocketId:', this.mySocketId);
 		if (this.currentState.phase === 'joined' || this.currentState.phase === 'joining') {
+			log('Already in conference or joining, ignoring');
 			return; // Déjà dans une conf
 		}
 
@@ -390,10 +459,12 @@ export class ConferenceManager {
 
 			let conferenceId = this.currentState.conferenceId;
 			const isNewConference = !conferenceId;
+			log('isNewConference:', isNewConference, 'existing conferenceId:', conferenceId);
 
 			if (isNewConference) {
 				// Générer un nouvel ID de conférence
 				conferenceId = this.generateConferenceId();
+				log('Generated new conferenceId:', conferenceId);
 			}
 
 			// Mettre à jour l'état
@@ -418,12 +489,14 @@ export class ConferenceManager {
 				timestamp: new Date().toISOString()
 			};
 
+			log('Broadcasting announcement:', announcement.type, 'participants:', participants);
 			this.broadcastSignal({
 				signalType: 'announcement',
 				announcement
 			});
 
 			// Établir les connexions avec les autres participants existants
+			log('Establishing peer connections with existing participants:', this.currentState.participants);
 			for (const participantId of this.currentState.participants) {
 				if (participantId !== this.mySocketId && !this.peers.has(participantId)) {
 					await this.createPeerConnection(participantId, true);
@@ -458,7 +531,9 @@ export class ConferenceManager {
 	 * Quitte la conférence en cours.
 	 */
 	leaveConference(): void {
+		log('leaveConference called, phase:', this.currentState.phase);
 		if (this.currentState.phase !== 'joined') {
+			log('Not in conference, ignoring leave');
 			return;
 		}
 
@@ -468,6 +543,7 @@ export class ConferenceManager {
 		const remainingParticipants = this.currentState.participants.filter(
 			(p) => p !== this.mySocketId
 		);
+		log('Remaining participants after leave:', remainingParticipants);
 
 		// Annoncer le départ à tous les participants de la room
 		const announcement: ConferenceAnnouncement = {
@@ -509,6 +585,7 @@ export class ConferenceManager {
 	 * Met à jour la liste des participants de la room.
 	 */
 	updateRoomParticipants(clients: Record<string, { pseudo?: string }>): void {
+		log('updateRoomParticipants:', Object.keys(clients));
 		this.roomParticipants.clear();
 		for (const [id, data] of Object.entries(clients)) {
 			this.roomParticipants.set(id, { pseudo: data.pseudo ?? 'Inconnu' });
