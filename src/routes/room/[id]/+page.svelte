@@ -345,6 +345,9 @@
 
 		void ensureDefaultAvatar();
 
+		// Attacher le gestionnaire beforeunload pour déconnecter proprement lors du rechargement
+		window.addEventListener('beforeunload', handleBeforeUnload);
+
 		resetSocket();
 		messages = [];
 		pseudoToSocketId = {};
@@ -507,13 +510,30 @@
 	});
 
 	onDestroy(() => {
+		// Retirer le gestionnaire beforeunload
+		window.removeEventListener('beforeunload', handleBeforeUnload);
+		// Cleanup de la conférence
 		conferenceManager?.destroy();
 		conferenceManager = null;
+		// Déconnexion du socket
 		const socket = getSocket();
 		socket.removeAllListeners();
 		socket.disconnect();
 		camRef?.close();
 	});
+
+	/**
+	 * Gestionnaire de fermeture/rechargement de page.
+	 * S'assure que le socket est déconnecté proprement avant le rechargement.
+	 */
+	function handleBeforeUnload() {
+		// Quitter la conférence proprement
+		conferenceManager?.leaveConference();
+		conferenceManager?.destroy();
+		// Déconnecter le socket immédiatement
+		const socket = getSocket();
+		socket.disconnect();
+	}
 
 	// Gestion des annonces de conférence (affichage dans le chat)
 	function handleConferenceAnnouncement(announcement: ConferenceAnnouncement) {

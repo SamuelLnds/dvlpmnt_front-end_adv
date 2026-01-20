@@ -4,7 +4,7 @@
 
 Application **SvelteKit 2 + Svelte 5** (PWA) de chat temps réel avec capture photo et appels WebRTC. Adapter-node pour déploiement serveur (`node build`).
 
-**Stack technique** : SvelteKit 2, Svelte 5, TypeScript, Socket.IO, WebRTC, Vitest (144 tests, 99%+ coverage)
+**Stack technique** : SvelteKit 2, Svelte 5, TypeScript, Socket.IO, WebRTC, Vitest (191+ tests, 90%+ coverage)
 
 ### Structure des Couches
 
@@ -18,7 +18,7 @@ src/
 │   ├── services/     # Services navigateur et temps réel
 │   │   ├── device.ts      # APIs navigateur (vibrate, notifications)
 │   │   ├── socket.ts      # Singleton Socket.IO (getSocket, withSocket, resetSocket)
-│   │   ├── webrtc.ts      # Gestion appels WebRTC (CallManager, CallState)
+│   │   ├── conference.ts  # Gestion conférences audio WebRTC multi-participants (ConferenceManager)
 │   │   └── index.ts       # Barrel exports
 │   ├── storage/      # Persistance localStorage
 │   │   ├── profile.ts     # Profil utilisateur + géolocalisation
@@ -33,17 +33,17 @@ src/
 │   ├── stores/       # Stores Svelte réactifs
 │   │   └── loading.ts     # Store global de chargement
 │   ├── components/   # Composants réutilisables
-│   │   ├── Navbar.svelte        # Navigation + thème toggle
-│   │   ├── CameraCapture.svelte # Capture photo (API MediaDevices)
-│   │   ├── Battery.svelte       # Indicateur batterie
-│   │   ├── CallPanel.svelte     # Interface d'appels WebRTC
-│   │   └── LoadingModal.svelte  # Modal de chargement global
+│   │   ├── Navbar.svelte          # Navigation + thème toggle
+│   │   ├── CameraCapture.svelte   # Capture photo (API MediaDevices)
+│   │   ├── Battery.svelte         # Indicateur batterie
+│   │   ├── ConferencePanel.svelte # Interface conférence audio WebRTC
+│   │   └── LoadingModal.svelte    # Modal de chargement global
 │   └── index.ts      # Barrel exports pour lib/ (tous les modules)
 └── routes/           # Pages SvelteKit (file-based routing)
     ├── camera/       # Capture photo locale
     ├── gallery/      # Galerie photos hors-ligne
     ├── reception/    # Lobby / sélection de room
-    ├── room/[id]/    # Chat temps réel + appels WebRTC
+    ├── room/[id]/    # Chat temps réel + conférence audio WebRTC
     └── user/         # Profil utilisateur + géolocalisation
 ```
 
@@ -54,7 +54,7 @@ src/
 3. **Rooms** : Fetch API externe via `api/rooms.ts` → merge via `utils/merge.ts` → localStorage (`storage/rooms.ts`)
 4. **Chat temps réel** : Socket.IO via `getSocket()` singleton (`services/socket.ts`) → événements `message`, `join`, `leave`
 5. **Images** : Upload/fetch via `api/images.ts` → utilise `api/client.ts` (`apiFetch<T>()`) → REST API externe
-6. **Appels WebRTC** : Signaling via Socket.IO, gestion via `CallManager` (`services/webrtc.ts`)
+6. **Conférences audio WebRTC** : Signaling via Socket.IO (`peer-signal`), gestion via `ConferenceManager` (`services/conference.ts`)
 
 ### Principes de Conception
 
@@ -66,8 +66,287 @@ src/
 
 **Testabilité** :
 - Fonctions pures dans `utils/` (testables indépendamment)
-- 144 tests unitaires (Vitest), 99%+ coverage
+- 191 tests unitaires (Vitest), 90%+ coverage
 - Mocks localStorage via `vi.stubGlobal()` dans les tests
+
+## Système de Conférence Audio WebRTC
+
+### Vue d'ensemble
+
+Le système permet des conférences audio **multi-participants** dans une room de chat. Architecture **mesh P2P** : chaque participant maintient une connexion WebRTC directe avec chaque autre participant de la conférence.
+
+**Fichiers concernés** :
+- `services/conference.ts` : `ConferenceManager` - logique de la conférence
+- `components/ConferencePanel.svelte` : Interface utilisateur
+- `routes/room/[id]/+page.svelte` : Intégration dans la page de chat
+
+### Concepts clés WebRTC
+
+#### Qu'est-ce que WebRTC ?
+WebRTC (Web Real-Time Communication) permet la communication audio/vidéo directe entre navigateurs **sans serveur intermédiaire** pour le flux média. Seul le **signaling** (échange d'informations de connexion) passe par le serveur.
+
+#### Comment ça fonctionne ?
+
+1. **Offre SDP (Session Description Protocol)** : L'initiateur crée une "offre" décrivant ses capacités média (codecs audio, etc.)
+2. **Réponse SDP** : Le destinataire répond avec ses propres capacités
+3. **ICE Candidates** : Échange des chemins réseau possibles pour se connecter
+
+#### Qu'est-ce que ICE ?
+**ICE (Interactive Connectivity Establishment)** trouve le meilleur chemin réseau entre deux pairs :
+- **STUN** : Découvre l'IP publique derrière un NAT
+- **TURN** : Serveur relais si connexion directe impossible (derrière firewall strict)
+
+Notre configuration utilise les serveurs STUN publics de Google :
+```typescript
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' }
+];
+```
+
+### Architecture de signaling
+
+Tout le signaling passe par l'événement Socket.IO **`peer-signal`** (natif au serveur).
+
+**Format du signal** :
+```typescript
+// Envoyé via socket.emit('peer-signal', { id, signal, roomName })
+type ConferenceSignal = {
+  signalType: 'webrtc' | 'announcement' | 'state-request' | 'state-response';
+  // Pour WebRTC
+  conferenceId?: string;
+  kind?: 'offer' | 'answer' | 'ice';
+  sdp?: string;
+  candidate?: RTCIceCandidateInit;
+  // Pour les annonces
+  announcement?: ConferenceAnnouncement;
+  // Pour state-request/response
+  fromId?: string;
+  participants?: string[];
+};
+```
+
+### Phases de la conférence
+
+```typescript
+type ConferencePhase =
+  | 'idle'              // Pas de conférence active dans la room
+  | 'active_not_joined' // Conférence en cours mais l'utilisateur n'y participe pas
+  | 'joining'           // Connexion en cours (micro + connexions peer)
+  | 'joined'            // Connecté et participant à la conférence
+  | 'leaving'           // Déconnexion en cours
+  | 'error';            // Erreur (retour auto à idle ou active_not_joined)
+```
+
+### Scénarios détaillés
+
+#### Scénario 1 : Démarrer une nouvelle conférence
+
+```
+Utilisateur A (seul dans la room) clique sur "Démarrer conférence"
+
+1. A: phase idle → joining
+2. A: Demande accès microphone (getUserMedia)
+3. A: Génère un conferenceId unique (conf_roomName_timestamp_random)
+4. A: phase joining → joined
+5. A: Broadcast "conference-started" à tous les participants de la room
+   → socket.emit('peer-signal', { id: B, signal: { signalType: 'announcement', announcement: {...} }, roomName })
+   → socket.emit('peer-signal', { id: C, signal: {...}, roomName })
+   → (pour chaque participant de roomParticipants)
+6. B et C reçoivent le signal et passent en phase "active_not_joined"
+```
+
+#### Scénario 2 : Rejoindre une conférence existante
+
+```
+Utilisateur B voit "Conférence en cours" et clique sur "Rejoindre"
+
+1. B: phase active_not_joined → joining
+2. B: Demande accès microphone
+3. B: phase joining → joined (avec le conferenceId existant)
+4. B: Broadcast "conference-joined" à tous les participants de la room
+5. B: Crée RTCPeerConnection avec chaque participant existant de la conf (ex: A)
+   a. B crée une offre SDP
+   b. B envoie l'offre à A via peer-signal (signalType: 'webrtc', kind: 'offer')
+   c. A reçoit l'offre, crée sa réponse SDP
+   d. A envoie la réponse à B via peer-signal (signalType: 'webrtc', kind: 'answer')
+   e. Échange de candidats ICE (signalType: 'webrtc', kind: 'ice')
+   f. Connexion P2P établie, audio transmis directement
+6. A reçoit "conference-joined", met à jour sa liste de participants
+```
+
+#### Scénario 3 : Nouvel arrivant dans la room (conférence déjà en cours)
+
+```
+Utilisateur D arrive dans la room alors que A, B, C sont en conférence
+
+1. D rejoint la room via Socket.IO (chat-join-room)
+2. D reçoit "chat-joined-room" avec éventuellement l'info de conférence
+3. DEUX MÉCANISMES de découverte :
+
+   MÉCANISME 1 - Info serveur (si disponible) :
+   - Le serveur inclut { conference: { conferenceId, participants } } dans chat-joined-room
+   - D appelle conferenceManager.setActiveConference(conferenceId, participants)
+   - D passe en phase "active_not_joined"
+
+   MÉCANISME 2 - Découverte client (fallback) :
+   - D appelle conferenceManager.requestConferenceState() après 500ms
+   - D broadcast un signal "state-request" à tous les participants
+   - A (en phase joined) reçoit le state-request
+   - A répond avec un signal "state-response" contenant conferenceId et participants
+   - D reçoit la réponse et passe en phase "active_not_joined"
+
+   MÉCANISME 3 - Découverte passive :
+   - Si quelqu'un rejoint/quitte pendant que D est en room, D reçoit les annonces
+   - Les annonces "conference-started", "conference-joined" font passer D en "active_not_joined"
+```
+
+#### Scénario 4 : Quitter la conférence
+
+```
+Utilisateur B quitte la conférence (A et C restent)
+
+1. B: phase joined → leaving
+2. B: Ferme toutes ses RTCPeerConnection
+3. B: Libère le stream microphone (stop tracks)
+4. B: Broadcast "conference-left" à tous les participants de la room
+5. B: phase leaving → active_not_joined (conférence continue avec A et C)
+6. A et C reçoivent "conference-left", retirent B de leurs listes
+7. A et C ferment leur RTCPeerConnection avec B
+
+IMPORTANT : La conférence continue tant qu'il reste au moins 1 participant
+```
+
+#### Scénario 5 : Dernier participant quitte
+
+```
+Utilisateur A quitte la conférence (dernier participant)
+
+1. A: phase joined → leaving
+2. A: Broadcast "conference-ended" (pas "conference-left")
+3. A: phase leaving → idle
+4. Tous les autres (qui étaient en active_not_joined) passent en idle
+```
+
+#### Scénario 6 : Participant se déconnecte brutalement (ferme l'onglet)
+
+```
+Utilisateur B ferme son navigateur sans cliquer "Quitter"
+
+1. Le gestionnaire beforeunload tente de déconnecter proprement
+2. Le serveur détecte la déconnexion Socket.IO
+3. Le serveur broadcast "chat-disconnected" avec l'id de B
+4. Tous les clients reçoivent "chat-disconnected"
+5. conferenceManager.removeRoomParticipant(B.id) est appelé
+6. B est retiré de la conférence et les RTCPeerConnection sont fermées
+```
+
+### Diagramme de séquence - Établissement connexion P2P
+
+```
+  A (initiateur)                    Serveur Socket.IO                    B (récepteur)
+       |                                   |                                   |
+       |------- peer-signal (offer) ------>|                                   |
+       |                                   |------- peer-signal (offer) ------>|
+       |                                   |                                   |
+       |                                   |<------ peer-signal (answer) ------|
+       |<------ peer-signal (answer) ------|                                   |
+       |                                   |                                   |
+       |------- peer-signal (ice) -------->|                                   |
+       |                                   |------- peer-signal (ice) -------->|
+       |                                   |                                   |
+       |                                   |<------ peer-signal (ice) ---------|
+       |<------ peer-signal (ice) ---------|                                   |
+       |                                   |                                   |
+       |<============== Audio P2P directement (sans serveur) ================>|
+```
+
+### Points d'attention
+
+#### roomParticipants doit être à jour
+Le broadcast des signaux utilise `roomParticipants`. Si cette Map est vide, aucun signal ne sera envoyé !
+```typescript
+// Dans +page.svelte, après chat-joined-room :
+conferenceManager?.updateRoomParticipants(payload.clients);
+```
+
+#### Gestion du rechargement de page
+Un gestionnaire `beforeunload` déconnecte proprement le socket pour éviter les utilisateurs dupliqués :
+```typescript
+window.addEventListener('beforeunload', handleBeforeUnload);
+
+function handleBeforeUnload() {
+  conferenceManager?.leaveConference();
+  conferenceManager?.destroy();
+  getSocket().disconnect();
+}
+```
+
+#### DEBUG - Activer les logs
+Dans `conference.ts`, mettre `DEBUG = true` pour voir tous les signaux :
+```typescript
+const DEBUG = true; // Affiche [Conference] ... dans la console
+```
+
+### API du ConferenceManager
+
+```typescript
+import { ConferenceManager, type ConferenceState, type ConferenceParticipant } from '$lib/services/conference';
+
+// Création
+const manager = new ConferenceManager(socket, roomName, myPseudo, {
+  onStateChange: (state: ConferenceState) => { ... },
+  onRemoteStream: (peerId: string, stream: MediaStream | null) => { ... },
+  onParticipantsChange: (participants: ConferenceParticipant[]) => { ... },
+  onAnnouncement: (announcement: ConferenceAnnouncement) => { ... },
+  onError: (error: string) => { ... }
+});
+
+// Configuration
+manager.setMySocketId(socketId);
+manager.updateRoomParticipants(clientsRecord);
+
+// Actions
+await manager.startOrJoinConference(); // Démarre ou rejoint
+manager.leaveConference();              // Quitte
+manager.requestConferenceState();       // Demande l'état aux autres
+
+// État
+manager.getState();                     // { phase, conferenceId, participants }
+manager.getPseudoById(socketId);        // Pseudo d'un participant
+
+// Cleanup
+manager.destroy();                      // Nettoie tout (listeners, streams, peers)
+```
+
+### Types exportés
+
+```typescript
+export type ConferencePhase = 'idle' | 'active_not_joined' | 'joining' | 'joined' | 'leaving' | 'error';
+
+export type ConferenceState = {
+  phase: ConferencePhase;
+  conferenceId: string | null;
+  participants: string[]; // Socket IDs des participants dans la conf
+  error?: string;
+};
+
+export type ConferenceParticipant = {
+  id: string;
+  pseudo: string;
+  isSelf: boolean;
+  inConference: boolean;
+};
+
+export type ConferenceAnnouncement = {
+  type: 'conference-started' | 'conference-ended' | 'conference-joined' | 'conference-left';
+  conferenceId: string;
+  participantId: string;
+  participantPseudo: string;
+  participants: string[];
+  timestamp: string;
+};
+```
 
 **Persistence** :
 - Pattern uniforme : `read*()` / `write*()` avec validation via `safeParse()`
@@ -159,7 +438,7 @@ import { apiFetch } from '$lib/api/client';
 const response = await apiFetch<ResponseType>('/endpoint');
 ``
 - Tests co-localisés : `*.test.ts` à côté des fichiers sources
-- 144 tests unitaires, 99%+ coverage
+- 191 tests unitaires (Vitest), 90%+ coverage
 - Setup global dans `src/tests/setup.ts`
 
 **Conventions de test** :
@@ -229,23 +508,22 @@ camRef.retake()  // Reprendre une nouvelle photo
 <CameraCapture bind:this={camRef} onCapture={handlePhoto} />
 ```
 
-### Composant CallPanel
+### Composant ConferencePanel
 
-Gestion des appels WebRTC (`lib/components/CallPanel.svelte`) :
-- Affiche la liste des participants dans la room
-- Modal plein écran pour appels entrants
-- Bandeau d'appel actif en haut de page
-- Gestion du flux audio distant
+Gestion des conférences audio WebRTC (`lib/components/ConferencePanel.svelte`) :
+- Affiche l'état de la conférence (idle, active_not_joined, joining, joined, etc.)
+- Boutons pour démarrer/rejoindre/quitter la conférence
+- Liste des participants de la room avec indication de qui est en conférence
+- Éléments audio pour les streams distants
 
 **Props** :
 ```typescript
 {
-  participants: Participant[];
-  callState: CallState;
-  onCall: (p: Participant) => void;
-  onAccept: () => void;
-  onReject: () => void;
-  onHangup: () => void;
+  conferenceState: ConferenceState;
+  participants: ConferenceParticipant[];
+  remoteStreams: Map<string, MediaStream>;
+  onStartOrJoin: () => void;
+  onLeave: () => void;
 }
 ```
 
@@ -290,7 +568,11 @@ import { getSocket } from '$lib/services/socket';
 
 **Fichiers barrel disponibles** :
 - `$lib/index.ts` : Tous les exports de lib/
-- `$lib/services/index.ts` : device, socket, webrtcbash
+- `$lib/services/index.ts` : device, socket, conference
+
+## Commandes npm
+
+```bash
 npm run dev          # Serveur dev Vite (HMR)
 npm run build        # Build production
 npm run start        # Lancer le build (node build)
@@ -328,12 +610,13 @@ camRef.close()   // Fermer et libérer le stream
 camRef.retake()  // Reprendre une nouvelle photo
 ```
 
-### Composant CallPanel
+### Composant ConferencePanel
 
-Gestion des appels WebRTC ([CallPanel.svelte](src/lib/components/CallPanel.svelte)) :
-- Affiche la liste des participants
-- Modal plein écran pour appels entrants
-- Bandeau d'appel actif en haut de page
+Interface de conférence audio WebRTC ([ConferencePanel.svelte](src/lib/components/ConferencePanel.svelte)) :
+- Affiche l'état de la conférence (idle, active_not_joined, joining, joined)
+- Boutons pour démarrer/rejoindre/quitter
+- Liste des participants avec indication de présence en conférence
+- Éléments `<audio>` pour les streams distants
 
 ### LoadingModal
 
@@ -354,7 +637,7 @@ loadingStore.hide();
 - Changement de routing dans `src/routes/` (nouveau dossier, nouveau `+page.*`, `+layout.*`, `[param]`, etc.)
 - Modification de `src/lib/index.ts` ou `src/lib/services/index.ts` (barrel exports)
 - Introduction d’un nouveau type partagé (ex: `Room`) ou déplacement de sa “source unique”
-- Refactor d’un singleton (ex: `services/socket.ts`) ou d’un manager (ex: `services/webrtc.ts`)
+- Refactor d'un singleton (ex: `services/socket.ts`) ou d'un manager (ex: `services/conference.ts`)
 
 ### Procédure de re-synchronisation (avant toute réponse “définitive”)
 1. **Re-lire l’arborescence actuelle** pertinente (au minimum : le dossier concerné + ses imports directs).
