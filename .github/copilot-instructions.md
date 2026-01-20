@@ -4,7 +4,7 @@
 
 Application **SvelteKit 2 + Svelte 5** (PWA) de chat temps réel avec capture photo. Adapter-node pour déploiement serveur (`node build`).
 
-**Stack technique** : SvelteKit 2, Svelte 5, TypeScript, Socket.IO, Vitest (144 tests, 99%+ coverage), **Storybook 10** (tests de composants)
+**Stack technique** : SvelteKit 2, Svelte 5, TypeScript, Socket.IO, Vitest (tests unitaires), **Storybook 10** (tests de composants), **Playwright** (tests E2E)
 
 ### Structure des Couches
 
@@ -44,12 +44,21 @@ src/
 │   │   ├── LoadingModal.stories.svelte
 │   │   └── LoadingModal.test.stories.ts
 │   └── index.ts      # Barrel exports pour lib/ (tous les modules)
-└── routes/           # Pages SvelteKit (file-based routing)
-    ├── camera/       # Capture photo locale
-    ├── gallery/      # Galerie photos hors-ligne
-    ├── reception/    # Lobby / sélection de room
-    ├── room/[id]/    # Chat temps réel
-    └── user/         # Profil utilisateur + géolocalisation
+├── routes/           # Pages SvelteKit (file-based routing)
+│   ├── camera/       # Capture photo locale
+│   ├── gallery/      # Galerie photos hors-ligne
+│   ├── reception/    # Lobby / sélection de room
+│   ├── room/[id]/    # Chat temps réel
+│   └── user/         # Profil utilisateur + géolocalisation
+└── tests/            # Setup tests Vitest
+e2e/                  # Tests E2E Playwright
+    ├── fixtures.ts        # Fixtures et helpers partagés
+    ├── user.spec.ts       # Tests page profil
+    ├── reception.spec.ts  # Tests page réception/lobby
+    ├── room.spec.ts       # Tests page chat
+    ├── camera.spec.ts     # Tests page caméra
+    ├── gallery.spec.ts    # Tests page galerie
+    └── navigation.spec.ts # Tests navbar, thème, navigation
 .storybook/           # Configuration Storybook
     ├── main.ts       # Config principale (addons, stories pattern)
     └── preview.ts    # Config preview (globals, styles, viewports)
@@ -243,12 +252,17 @@ npm run test         # Lancer les tests Vitest (watch mode)
 npm run test -- --run # Tests en mode CI (sans watch)
 npm run storybook    # Lancer Storybook (port 6006)
 npm run build-storybook # Build statique Storybook
+npm run e2e          # Lancer les tests E2E Playwright
+npm run e2e:ui       # Tests E2E avec interface graphique
+npm run e2e:headed   # Tests E2E avec navigateur visible
+npm run e2e:debug    # Tests E2E en mode debug
+npm run e2e:report   # Voir le rapport HTML des tests
+npm run e2e:codegen  # Générer des tests via enregistrement
 ```
 
 ## Tests Unitaires (Vitest)
 
 - Tests co-localisés : `*.test.ts` à côté des fichiers sources
-- 144 tests unitaires (Vitest), 99%+ coverage
 - Setup global dans `src/tests/setup.ts`
 
 **Conventions de test** :
@@ -365,6 +379,101 @@ export const TestInteraction: Story = {
 2. **Documenter** : Blocs `/** ... */` expliquant le comportement testé
 3. **Tester l'a11y** : Utiliser l'onglet Accessibility de Storybook
 4. **Couvrir les cas** : États normaux, erreurs, edge cases, responsive
+
+## Tests E2E (Playwright)
+
+### Structure des Tests
+
+Tests organisés par fonctionnalité dans `e2e/` :
+- `fixtures.ts` : Fixtures partagées et helpers (StorageHelper, authenticatedPage)
+- `user.spec.ts` : Tests page profil utilisateur
+- `reception.spec.ts` : Tests page réception/lobby
+- `room.spec.ts` : Tests page chat temps réel
+- `camera.spec.ts` : Tests page caméra
+- `gallery.spec.ts` : Tests page galerie
+- `navigation.spec.ts` : Tests navbar, thème, navigation globale
+
+### Configuration Playwright
+
+**Fichier `playwright.config.ts`** :
+- Navigateurs : Chromium, Firefox, WebKit, Mobile Chrome, Mobile Safari
+- Serveur dev automatique (`npm run dev`)
+- Permissions préaccordées : camera, notifications, geolocation
+- Traces et screenshots en cas d'échec
+
+### Fixtures Personnalisées
+
+```typescript
+import { test, expect, StorageHelper, TEST_DATA } from './fixtures';
+
+// Fixture pour utilisateur authentifié
+test('exemple avec utilisateur connecté', async ({ authenticatedPage }) => {
+  await authenticatedPage.goto('/reception');
+  // L'utilisateur "TestUser" est déjà connecté
+});
+
+// Helper pour manipuler le localStorage
+test('manipulation du storage', async ({ page }) => {
+  const storage = new StorageHelper(page);
+  await storage.setProfile('MonPseudo');
+  await storage.setPhotos([TEST_DATA.photos.red]);
+  const profile = await storage.getProfile();
+});
+```
+
+### Conventions de Test E2E
+
+```typescript
+import { test, expect, StorageHelper, waitForLoadingToFinish } from './fixtures';
+
+test.describe('Ma fonctionnalité', () => {
+  test.describe('Sous-catégorie', () => {
+    test('décrit le comportement testé', async ({ authenticatedPage }) => {
+      // Arrange : préparer l'état
+      const storage = new StorageHelper(authenticatedPage);
+      await storage.setProfile('TestUser');
+      
+      // Act : effectuer l'action
+      await authenticatedPage.goto('/reception');
+      await authenticatedPage.getByRole('button', { name: /rejoindre/i }).click();
+      
+      // Assert : vérifier le résultat
+      await expect(authenticatedPage).toHaveURL(/\/room\//);
+    });
+  });
+});
+```
+
+### Clés localStorage (constantes)
+
+```typescript
+export const STORAGE_KEYS = {
+  PROFILE: 'chat.profile.v1',
+  LAST_ROOM: 'chat.lastRoom.v1',
+  LOCATION: 'chat.location.v1',
+  ROOMS: 'chat.rooms.v1',
+  PHOTOS: 'camera.photos.v1',
+  THEME: 'app-theme',
+};
+```
+
+### Helpers Utiles
+
+- `waitForLoadingToFinish(page)` : Attend que le LoadingModal disparaisse
+- `TEST_DATA.users` : Profils de test (default, withAvatar)
+- `TEST_DATA.rooms` : Rooms de test (general, random, tech)
+- `TEST_DATA.photos` : Photos placeholder en base64
+- `TEST_DATA.locations` : Positions géographiques (Paris, Lyon)
+
+### Bonnes Pratiques E2E
+
+1. **Utiliser les fixtures** : `authenticatedPage` pour les tests authentifiés
+2. **Isoler les tests** : Chaque test doit être indépendant
+3. **Préférer les sélecteurs accessibles** : `getByRole()`, `getByLabel()`, `getByText()`
+4. **Gérer l'asynchrone** : Utiliser `waitForLoadingToFinish()` après les actions
+5. **Documenter les tests** : Blocs `test.describe()` avec descriptions claires
+6. **Tester responsive** : `page.setViewportSize()` pour mobile
+7. **Gestion des erreurs** : `.catch()` pour les assertions qui peuvent échouer
 
 ## Points d'Attention
 
