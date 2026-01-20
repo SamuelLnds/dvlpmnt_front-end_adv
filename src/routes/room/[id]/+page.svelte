@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { ChevronDown, Image as ImageIcon, X } from 'lucide-svelte';
+	import { ChevronDown, Image as ImageIcon, X, Users } from 'lucide-svelte';
 	import type { PageData as OriginalPageData } from './$types';
 	type PageData = OriginalPageData & { roomId: string };
 
@@ -12,19 +12,16 @@
 	import { readPhotos, addPhotoFromDataURL, type PhotoItem } from '$lib/storage/photos';
 
 	import CameraCapture from '$lib/components/CameraCapture.svelte';
-	import ConferencePanel from '$lib/components/ConferencePanel.svelte';
 	import { loadingStore } from '$lib/stores/loading';
-	import { ConferenceManager, type ConferenceState, type ConferenceParticipant, type ConferenceAnnouncement } from '$lib/services/conference';
 	let camRef: InstanceType<typeof CameraCapture> | null = null;
-	let conferencePanelRef: { setRemoteStream: (peerId: string, stream: MediaStream | null) => void } | null = null;
 
 	export let data: PageData;
 	const roomId = data.roomId;
 
-	// État pour la gestion des conférences WebRTC
-	let conferenceManager: ConferenceManager | null = null;
-	let conferenceParticipants: ConferenceParticipant[] = [];
-	let conferenceState: ConferenceState = { phase: 'idle', conferenceId: null, participants: [] };
+	// Liste des participants de la room
+	type RoomParticipant = { id: string; pseudo: string };
+	let roomParticipants: RoomParticipant[] = [];
+	let showParticipants = false;
 
 	type ChatMsg = {
 		content: string;
@@ -374,26 +371,6 @@
 				await syncProfileAvatar(mySocketId, pseudo);
 				void ensureAvatarForKey(myRemoteKey);
 
-				// Initialisation du gestionnaire de conférence WebRTC
-				conferenceManager = new ConferenceManager(socket, roomId, pseudo ?? '', {
-					onStateChange: (state) => {
-						conferenceState = state;
-					},
-					onRemoteStream: (peerId, stream) => {
-						conferencePanelRef?.setRemoteStream(peerId, stream);
-					},
-					onParticipantsChange: (participants) => {
-						conferenceParticipants = participants;
-					},
-					onAnnouncement: (announcement) => {
-						handleConferenceAnnouncement(announcement);
-					},
-					onError: (error) => {
-						console.error('[Conference] Error:', error);
-					}
-				});
-				conferenceManager.setMySocketId(mySocketId);
-
 				socket.emit('chat-join-room', { pseudo, roomName: roomId });
 			});
 
@@ -411,30 +388,23 @@
 
 			socket.on(
 				'chat-joined-room',
-				(payload: { clients?: Record<string, { pseudo?: string }>; conference?: { conferenceId: string; participants: string[] } }) => {
+				(payload: { clients?: Record<string, { pseudo?: string }> }) => {
 					indexClients(payload?.clients);
-					// Mise à jour de la liste des participants pour la conférence
-					if (payload?.clients && mySocketId) {
-						conferenceManager?.updateRoomParticipants(payload.clients);
-					}
-					// Si une conférence est en cours (info serveur), informer le manager
-					if (payload?.conference?.conferenceId) {
-						conferenceManager?.setActiveConference(payload.conference.conferenceId, payload.conference.participants);
-					} else {
-						// Fallback client: demander l'état aux autres participants
-						// (si le serveur ne conserve pas l'état de conférence)
-						setTimeout(() => {
-							conferenceManager?.requestConferenceState();
-						}, 500);
+					// Mise à jour de la liste des participants
+					if (payload?.clients) {
+						roomParticipants = Object.entries(payload.clients).map(([id, data]) => ({
+							id,
+							pseudo: data.pseudo ?? 'Anonyme'
+						}));
 					}
 				}
 			);
 
 			socket.on('chat-disconnected', (payload: { id?: string; pseudo?: string }) => {
 				dropClient(payload?.id, payload?.pseudo);
-				// Retrait du participant de la conférence
+				// Retrait du participant de la liste
 				if (payload?.id) {
-					conferenceManager?.removeRoomParticipant(payload.id);
+					roomParticipants = roomParticipants.filter(p => p.id !== payload.id);
 				}
 			});
 
@@ -512,9 +482,6 @@
 	onDestroy(() => {
 		// Retirer le gestionnaire beforeunload
 		window.removeEventListener('beforeunload', handleBeforeUnload);
-		// Cleanup de la conférence
-		conferenceManager?.destroy();
-		conferenceManager = null;
 		// Déconnexion du socket
 		const socket = getSocket();
 		socket.removeAllListeners();
@@ -527,54 +494,9 @@
 	 * S'assure que le socket est déconnecté proprement avant le rechargement.
 	 */
 	function handleBeforeUnload() {
-		// Quitter la conférence proprement
-		conferenceManager?.leaveConference();
-		conferenceManager?.destroy();
 		// Déconnecter le socket immédiatement
 		const socket = getSocket();
 		socket.disconnect();
-	}
-
-	// Gestion des annonces de conférence (affichage dans le chat)
-	function handleConferenceAnnouncement(announcement: ConferenceAnnouncement) {
-		let content = '';
-		const pseudo = announcement.participantPseudo || 'Un participant';
-		const count = announcement.participants.length;
-		
-		switch (announcement.type) {
-			case 'conference-started':
-				content = `🎙️ ${pseudo} a démarré une conférence audio`;
-				break;
-			case 'conference-ended':
-				content = `🔇 La conférence audio est terminée`;
-				break;
-			case 'conference-joined':
-				content = `🎤 ${pseudo} a rejoint la conférence (${count} participant${count > 1 ? 's' : ''})`;
-				break;
-			case 'conference-left':
-				content = `🔇 ${pseudo} a quitté la conférence`;
-				break;
-		}
-		
-		const msg: ChatMsg = {
-			content,
-			dateEmis: announcement.timestamp,
-			roomName: roomId,
-			categorie: 'INFO',
-			pseudo: 'Système'
-		};
-		
-		const shouldStick = isNearBottom();
-		messages = [...messages, msg];
-		
-		if (shouldStick) {
-			tick().then(() => {
-				scrollToBottom(true);
-				updateJumpButton();
-			});
-		} else {
-			updateJumpButton();
-		}
 	}
 
 	function emitMessage(content: string) {
@@ -720,14 +642,37 @@
 		</div>
 	</form>
 
-	<!-- Panneau de conférence audio -->
-	<ConferencePanel
-		bind:this={conferencePanelRef}
-		participants={conferenceParticipants}
-		{conferenceState}
-		onJoin={() => conferenceManager?.startOrJoinConference()}
-		onLeave={() => conferenceManager?.leaveConference()}
-	/>
+	<!-- Liste des participants -->
+	<button
+		type="button"
+		class="participants-toggle btn btn--ghost"
+		on:click={() => (showParticipants = !showParticipants)}
+		title="Voir les participants"
+	>
+		<Users size={18} stroke-width={1.5} aria-hidden="true" />
+		<span>{roomParticipants.length}</span>
+	</button>
+
+	{#if showParticipants}
+		<aside class="participants-panel surface">
+			<header class="participants-header">
+				<strong>Participants ({roomParticipants.length})</strong>
+				<button class="btn btn--ghost btn--icon" on:click={() => (showParticipants = false)} aria-label="Fermer">
+					<X size={18} stroke-width={1.5} aria-hidden="true" />
+				</button>
+			</header>
+			<ul class="participants-list">
+				{#each roomParticipants as participant (participant.id)}
+					<li class="participant-item" class:participant-item--self={participant.id === mySocketId}>
+						<span class="participant-pseudo">{participant.pseudo}</span>
+						{#if participant.id === mySocketId}
+							<span class="badge badge--own">Vous</span>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		</aside>
+	{/if}
 
 	{#if pickerOpen}
 		<div class="chat-picker" role="dialog" aria-label="Choisir une image">
@@ -1078,5 +1023,58 @@
 			flex-wrap: wrap;
 			justify-content: flex-end;
 		}
+	}
+
+	/* Liste des participants */
+	.participants-toggle {
+		position: fixed;
+		bottom: 1rem;
+		right: 1rem;
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		z-index: 50;
+	}
+
+	.participants-panel {
+		position: fixed;
+		bottom: 4rem;
+		right: 1rem;
+		width: min(280px, 90vw);
+		max-height: 300px;
+		overflow-y: auto;
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-lg);
+		z-index: 55;
+	}
+
+	.participants-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.75rem 1rem;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.participants-list {
+		list-style: none;
+		margin: 0;
+		padding: 0.5rem;
+	}
+
+	.participant-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.5rem 0.75rem;
+		border-radius: var(--radius-sm);
+	}
+
+	.participant-item--self {
+		background: var(--color-primary-soft, rgba(99, 102, 241, 0.1));
+	}
+
+	.participant-pseudo {
+		font-size: 0.9rem;
 	}
 </style>
