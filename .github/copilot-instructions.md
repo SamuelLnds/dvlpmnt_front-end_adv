@@ -4,7 +4,7 @@
 
 Application **SvelteKit 2 + Svelte 5** (PWA) de chat temps réel avec capture photo. Adapter-node pour déploiement serveur (`node build`).
 
-**Stack technique** : SvelteKit 2, Svelte 5, TypeScript, Socket.IO, Vitest (144 tests, 99%+ coverage)
+**Stack technique** : SvelteKit 2, Svelte 5, TypeScript, Socket.IO, Vitest (144 tests, 99%+ coverage), **Storybook 10** (tests de composants)
 
 ### Structure des Couches
 
@@ -31,11 +31,18 @@ src/
 │   │   └── download.ts    # triggerDownload, blobToDataURL, fileToDataURL
 │   ├── stores/       # Stores Svelte réactifs
 │   │   └── loading.ts     # Store global de chargement
-│   ├── components/   # Composants réutilisables
-│   │   ├── Navbar.svelte          # Navigation + thème toggle
-│   │   ├── CameraCapture.svelte   # Capture photo (API MediaDevices)
-│   │   ├── Battery.svelte         # Indicateur batterie
-│   │   └── LoadingModal.svelte    # Modal de chargement global
+│   ├── components/   # Composants réutilisables + Stories Storybook
+│   │   ├── Navbar.svelte              # Navigation + thème toggle
+│   │   ├── Navbar.stories.svelte      # Stories Storybook (CSF)
+│   │   ├── Navbar.test.stories.ts     # Tests d'interaction Storybook
+│   │   ├── CameraCapture.svelte       # Capture photo (API MediaDevices)
+│   │   ├── CameraCapture.stories.svelte
+│   │   ├── Battery.svelte             # Indicateur batterie
+│   │   ├── Battery.stories.svelte
+│   │   ├── Battery.test.stories.ts
+│   │   ├── LoadingModal.svelte        # Modal de chargement global
+│   │   ├── LoadingModal.stories.svelte
+│   │   └── LoadingModal.test.stories.ts
 │   └── index.ts      # Barrel exports pour lib/ (tous les modules)
 └── routes/           # Pages SvelteKit (file-based routing)
     ├── camera/       # Capture photo locale
@@ -43,6 +50,9 @@ src/
     ├── reception/    # Lobby / sélection de room
     ├── room/[id]/    # Chat temps réel
     └── user/         # Profil utilisateur + géolocalisation
+.storybook/           # Configuration Storybook
+    ├── main.ts       # Config principale (addons, stories pattern)
+    └── preview.ts    # Config preview (globals, styles, viewports)
 ```
 
 ### Flux de Données
@@ -231,9 +241,11 @@ npm run check        # Vérification TypeScript + Svelte
 npm run format       # Prettier write
 npm run test         # Lancer les tests Vitest (watch mode)
 npm run test -- --run # Tests en mode CI (sans watch)
+npm run storybook    # Lancer Storybook (port 6006)
+npm run build-storybook # Build statique Storybook
 ```
 
-## Tests
+## Tests Unitaires (Vitest)
 
 - Tests co-localisés : `*.test.ts` à côté des fichiers sources
 - 144 tests unitaires (Vitest), 99%+ coverage
@@ -266,6 +278,93 @@ describe('nomDuModule', () => {
 - `vi.stubGlobal('localStorage', mockLocalStorage)` pour localStorage
 - `vi.mock('socket.io-client')` pour Socket.IO
 - `vi.mocked(fetch).mockResolvedValue()` pour fetch
+
+## Tests de Composants (Storybook)
+
+### Structure des Stories
+
+Chaque composant a des fichiers associés :
+- `Component.svelte` : Le composant
+- `Component.stories.svelte` : Stories CSF (Svelte Component Story Format)
+- `Component.test.stories.ts` : Tests d'interaction Storybook
+
+### Conventions de Stories
+
+**Stories visuelles** (`.stories.svelte`) - Format CSF Svelte :
+```svelte
+<script module>
+  import { defineMeta } from '@storybook/addon-svelte-csf';
+  import MonComposant from './MonComposant.svelte';
+
+  /**
+   * Documentation du composant et de ses stories
+   */
+  const { Story } = defineMeta({
+    title: 'Composants/MonComposant',
+    component: MonComposant,
+    tags: ['autodocs'],
+    args: { /* props par défaut */ },
+    argTypes: { /* contrôles */ },
+  });
+</script>
+
+<!-- Story avec nom descriptif -->
+<Story name="État par défaut">
+  <MonComposant prop="valeur" />
+</Story>
+```
+
+**Tests d'interaction** (`.test.stories.ts`) :
+```typescript
+import type { Meta, StoryObj } from '@storybook/svelte';
+import { expect, fn, userEvent, within, waitFor } from 'storybook/test';
+import MonComposant from './MonComposant.svelte';
+
+const meta = {
+  title: 'Tests/MonComposant',
+  component: MonComposant,
+  args: {
+    onAction: fn(), // Mock des callbacks
+  },
+} satisfies Meta<typeof MonComposant>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const TestInteraction: Story = {
+  name: '🧪 Test: Nom du test',
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    
+    // Trouver un élément
+    const button = canvas.getByRole('button', { name: /label/i });
+    
+    // Simuler une interaction
+    await userEvent.click(button);
+    
+    // Vérifier le résultat
+    expect(args.onAction).toHaveBeenCalled();
+  },
+};
+```
+
+### Configuration Storybook
+
+**Fichier `.storybook/main.ts`** :
+- Alias `$lib` configuré pour SvelteKit
+- Addons : a11y, docs, vitest, svelte-csf
+
+**Fichier `.storybook/preview.ts`** :
+- Import des styles globaux (`app.css`)
+- Viewports prédéfinis (mobile, tablet, desktop)
+- Backgrounds pour thèmes dark/light
+
+### Bonnes Pratiques Stories
+
+1. **Nommer clairement** : `État par défaut`, `Avec erreur`, `Mode mobile`
+2. **Documenter** : Blocs `/** ... */` expliquant le comportement testé
+3. **Tester l'a11y** : Utiliser l'onglet Accessibility de Storybook
+4. **Couvrir les cas** : États normaux, erreurs, edge cases, responsive
 
 ## Points d'Attention
 
