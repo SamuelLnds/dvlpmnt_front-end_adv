@@ -59,6 +59,24 @@ const ICE_SERVERS: RTCIceServer[] = [
 	{ urls: 'stun:stun1.l.google.com:19302' }
 ];
 
+// Types de signaux envoyés via peer-signal
+type SignalType = 'webrtc' | 'announcement' | 'state-request' | 'state-response';
+
+type ConferenceSignal = {
+	signalType: SignalType;
+	conferenceId?: string;
+	// Pour WebRTC
+	kind?: 'offer' | 'answer' | 'ice';
+	sdp?: string;
+	candidate?: RTCIceCandidateInit;
+	// Pour les annonces
+	announcement?: ConferenceAnnouncement;
+	// Pour state-request/response
+	fromId?: string;
+	participants?: string[];
+	toId?: string;
+};
+
 // ============================================================================
 // CONFERENCE MANAGER
 // ============================================================================
@@ -138,55 +156,128 @@ export class ConferenceManager {
 	// ============================================================================
 
 	private setupSocketListeners(): void {
-		// Signaling WebRTC
-		this.socket.on('peer-signal', (data: PeerSignalEnvelope) => {
+		// Tout passe par peer-signal : WebRTC, annonces, et demandes d'état
+		this.socket.on('peer-signal', (data: { id: string; signal: unknown; roomName: string }) => {
+			if (data.roomName !== this.roomName) return;
 			this.handlePeerSignal(data);
 		});
+	}
 
-		// Annonces de conférence
-		this.socket.on('conference-announcement', (data: ConferenceAnnouncement) => {
-			this.handleConferenceAnnouncement(data);
-		});
+	/**
+	 * Traite un signal reçu via peer-signal.
+	 */
+	private handlePeerSignal(data: { id: string; signal: unknown; roomName: string }): void {
+		const signal = data.signal as ConferenceSignal;
+		const fromId = data.id;
 
-		// Requête d'état de conférence (pour les nouveaux arrivants)
-		this.socket.on('conference-state-request', (data: { fromId: string; roomName: string }) => {
-			this.handleStateRequest(data);
-		});
+		// Ignorer ses propres signaux
+		if (fromId === this.mySocketId) return;
 
-		// Réponse d'état de conférence
-		this.socket.on('conference-state-response', (data: { conferenceId: string; participants: string[]; roomName: string }) => {
-			this.handleStateResponse(data);
+		switch (signal.signalType) {
+			case 'webrtc':
+				this.handleWebRTCSignal(fromId, signal);
+				break;
+			case 'announcement':
+				if (signal.announcement) {
+					this.handleConferenceAnnouncement(signal.announcement);
+				}
+				break;
+			case 'state-request':
+				this.handleStateRequest(fromId);
+				break;
+			case 'state-response':
+				this.handleStateResponse(signal);
+				break;
+		}
+	}
+
+	/**
+	 * Traite un signal WebRTC (offer/answer/ice).
+	 */
+	private handleWebRTCSignal(fromId: string, signal: ConferenceSignal): void {
+		// Vérifier que c'est pour notre conférence
+		if (!signal.conferenceId || signal.conferenceId !== this.currentState.conferenceId) return;
+		
+		// Ne traiter que si on est en phase joined ou joining
+		if (this.currentState.phase !== 'joined' && this.currentState.phase !== 'joining') return;
+
+		const kind = signal.kind;
+
+		if (kind === 'offer' && signal.sdp) {
+			this.handleOffer(fromId, { type: 'offer', sdp: signal.sdp });
+		} else if (kind === 'answer' && signal.sdp) {
+			this.handleAnswer(fromId, { type: 'answer', sdp: signal.sdp });
+		} else if (kind === 'ice' && signal.candidate) {
+			this.handleIceCandidate(fromId, signal.candidate);
+		}
+	}
+
+	/**
+	 * Envoie un signal via peer-signal vers un destinataire spécifique.
+	 */
+	private sendSignal(toId: string, signal: ConferenceSignal): void {
+		this.socket.emit('peer-signal', {
+			id: toId,
+			signal,
+			roomName: this.roomName
 		});
+	}
+
+	/**
+	 * Envoie un signal à tous les participants de la room (broadcast manuel).
+	 */
+	private broadcastSignal(signal: ConferenceSignal): void {
+		for (const [participantId] of this.roomParticipants) {
+			if (participantId !== this.mySocketId) {
+				this.sendSignal(participantId, signal);
+			}
+		}
+	}
+
+	/**
+	 * Envoie un signal WebRTC via peer-signal.
+	 */
+	private sendPeerSignal(toId: string, kind: 'offer' | 'answer' | 'ice', signalData: RTCSessionDescriptionInit | { candidate: RTCIceCandidateInit }): void {
+		if (!this.currentState.conferenceId) return;
+
+		const signal: ConferenceSignal = {
+			signalType: 'webrtc',
+			conferenceId: this.currentState.conferenceId,
+			kind,
+			...(kind === 'ice' 
+				? { candidate: (signalData as { candidate: RTCIceCandidateInit }).candidate }
+				: { sdp: (signalData as RTCSessionDescriptionInit).sdp })
+		};
+
+		this.sendSignal(toId, signal);
 	}
 
 	/**
 	 * Répond à une demande d'état de conférence (si on est dans la conf).
 	 */
-	private handleStateRequest(data: { fromId: string; roomName: string }): void {
-		if (data.roomName !== this.roomName) return;
+	private handleStateRequest(fromId: string): void {
 		if (this.currentState.phase !== 'joined' || !this.currentState.conferenceId) return;
 
 		// On est dans la conférence, répondre avec l'état actuel
-		this.socket.emit('conference-state-response', {
-			roomName: this.roomName,
+		this.sendSignal(fromId, {
+			signalType: 'state-response',
 			conferenceId: this.currentState.conferenceId,
-			participants: this.currentState.participants,
-			toId: data.fromId
+			participants: this.currentState.participants
 		});
 	}
 
 	/**
 	 * Traite une réponse d'état de conférence.
 	 */
-	private handleStateResponse(data: { conferenceId: string; participants: string[]; roomName: string }): void {
-		if (data.roomName !== this.roomName) return;
+	private handleStateResponse(signal: ConferenceSignal): void {
 		if (this.currentState.phase !== 'idle') return; // On a déjà l'info
+		if (!signal.conferenceId || !signal.participants) return;
 
 		// Une conférence est en cours
 		this.updateState({
 			phase: 'active_not_joined',
-			conferenceId: data.conferenceId,
-			participants: data.participants
+			conferenceId: signal.conferenceId,
+			participants: signal.participants
 		});
 		this.notifyParticipantsChange();
 	}
@@ -198,34 +289,10 @@ export class ConferenceManager {
 	requestConferenceState(): void {
 		if (this.currentState.phase !== 'idle') return;
 
-		this.socket.emit('conference-state-request', {
-			fromId: this.mySocketId,
-			roomName: this.roomName
+		this.broadcastSignal({
+			signalType: 'state-request',
+			fromId: this.mySocketId
 		});
-	}
-
-	private handlePeerSignal(data: PeerSignalEnvelope): void {
-		// Filtrage strict des signaux
-		if (!this.mySocketId) return;
-		if (data.fromId === this.mySocketId) return; // Ignorer ses propres signaux
-		if (data.toId !== this.mySocketId) return; // Pas pour moi
-		if (data.roomName !== this.roomName) return; // Mauvaise room
-		if (data.conferenceId !== this.currentState.conferenceId) return; // Mauvaise conf
-
-		// Ne traiter que si on est en phase joined ou joining
-		if (this.currentState.phase !== 'joined' && this.currentState.phase !== 'joining') {
-			return;
-		}
-
-		const { fromId, signal, kind } = data;
-
-		if (kind === 'offer') {
-			this.handleOffer(fromId, signal as RTCSessionDescriptionInit);
-		} else if (kind === 'answer') {
-			this.handleAnswer(fromId, signal as RTCSessionDescriptionInit);
-		} else if (kind === 'ice') {
-			this.handleIceCandidate(fromId, (signal as { candidate: RTCIceCandidateInit }).candidate);
-		}
 	}
 
 	private handleConferenceAnnouncement(data: ConferenceAnnouncement): void {
@@ -341,7 +408,7 @@ export class ConferenceManager {
 				participants
 			});
 
-			// Annoncer dans le chat
+			// Annoncer à tous les participants de la room
 			const announcement: ConferenceAnnouncement = {
 				type: isNewConference ? 'conference-started' : 'conference-joined',
 				conferenceId: conferenceId!,
@@ -351,9 +418,9 @@ export class ConferenceManager {
 				timestamp: new Date().toISOString()
 			};
 
-			this.socket.emit('conference-announcement', {
-				roomName: this.roomName,
-				...announcement
+			this.broadcastSignal({
+				signalType: 'announcement',
+				announcement
 			});
 
 			// Établir les connexions avec les autres participants existants
@@ -402,7 +469,7 @@ export class ConferenceManager {
 			(p) => p !== this.mySocketId
 		);
 
-		// Annoncer le départ
+		// Annoncer le départ à tous les participants de la room
 		const announcement: ConferenceAnnouncement = {
 			type: remainingParticipants.length === 0 ? 'conference-ended' : 'conference-left',
 			conferenceId: conferenceId!,
@@ -412,9 +479,9 @@ export class ConferenceManager {
 			timestamp: new Date().toISOString()
 		};
 
-		this.socket.emit('conference-announcement', {
-			roomName: this.roomName,
-			...announcement
+		this.broadcastSignal({
+			signalType: 'announcement',
+			announcement
 		});
 
 		// Nettoyer
@@ -525,15 +592,7 @@ export class ConferenceManager {
 		// Gestion des candidats ICE
 		pc.onicecandidate = (event) => {
 			if (event.candidate && this.currentState.conferenceId) {
-				const signal: PeerSignalEnvelope = {
-					roomName: this.roomName,
-					conferenceId: this.currentState.conferenceId,
-					fromId: this.mySocketId,
-					toId: peerId,
-					signal: { candidate: event.candidate.toJSON() },
-					kind: 'ice'
-				};
-				this.socket.emit('peer-signal', signal);
+				this.sendPeerSignal(peerId, 'ice', { candidate: event.candidate.toJSON() });
 			}
 		};
 
@@ -561,15 +620,7 @@ export class ConferenceManager {
 				await pc.setLocalDescription(offer);
 
 				if (this.currentState.conferenceId) {
-					const signal: PeerSignalEnvelope = {
-						roomName: this.roomName,
-						conferenceId: this.currentState.conferenceId,
-						fromId: this.mySocketId,
-						toId: peerId,
-						signal: offer,
-						kind: 'offer'
-					};
-					this.socket.emit('peer-signal', signal);
+					this.sendPeerSignal(peerId, 'offer', offer);
 				}
 			} catch (error) {
 				console.error('[Conference] Erreur création offre:', error);
@@ -602,15 +653,7 @@ export class ConferenceManager {
 			await pc.setLocalDescription(answer);
 
 			if (this.currentState.conferenceId) {
-				const signal: PeerSignalEnvelope = {
-					roomName: this.roomName,
-					conferenceId: this.currentState.conferenceId,
-					fromId: this.mySocketId,
-					toId: fromId,
-					signal: answer,
-					kind: 'answer'
-				};
-				this.socket.emit('peer-signal', signal);
+				this.sendPeerSignal(fromId, 'answer', answer);
 			}
 		} catch (error) {
 			console.error('[Conference] Erreur traitement offre:', error);
@@ -719,6 +762,5 @@ export class ConferenceManager {
 	destroy(): void {
 		this.leaveConference();
 		this.socket.off('peer-signal');
-		this.socket.off('conference-announcement');
 	}
 }

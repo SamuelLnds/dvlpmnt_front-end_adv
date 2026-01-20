@@ -436,6 +436,7 @@
 			});
 
 			socket.on('chat-msg', (msg: ChatMsg) => {
+
 				const senderId = resolveSenderId(msg);
 				const pseudoKey = normalizePseudo(msg.pseudo);
 				if (senderId && pseudoKey && pseudoToSocketId[pseudoKey] !== senderId) {

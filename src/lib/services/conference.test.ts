@@ -1,8 +1,81 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ConferenceManager, type ConferenceState, type ConferenceParticipant, type ConferenceAnnouncement, type PeerSignalEnvelope } from './conference';
+import { ConferenceManager, type ConferenceState, type ConferenceParticipant, type ConferenceAnnouncement } from './conference';
 import type { Socket } from 'socket.io-client';
 
 type MockSocket = Socket & { _trigger: (event: string, ...args: unknown[]) => void };
+
+// Types de signaux (doit correspondre à ConferenceSignal dans conference.ts)
+type SignalType = 'webrtc' | 'announcement' | 'state-request' | 'state-response';
+
+type ConferenceSignal = {
+	signalType: SignalType;
+	conferenceId?: string;
+    roomName?: string;
+	kind?: 'offer' | 'answer' | 'ice';
+	sdp?: string;
+	candidate?: RTCIceCandidateInit;
+	announcement?: ConferenceAnnouncement;
+	fromId?: string;
+	participants?: string[];
+	toId?: string;
+};
+
+// Helper pour créer un signal peer-signal (tout passe par peer-signal maintenant)
+function createSignal(fromId: string, signal: ConferenceSignal, roomName = 'test-room') {
+	return {
+		id: fromId,
+		signal,
+		roomName
+	};
+}
+
+// Helper pour créer un signal WebRTC
+function createWebRTCSignal(fromId: string, conferenceId: string, kind: 'offer' | 'answer' | 'ice', data: { sdp?: string; candidate?: RTCIceCandidateInit }, roomName = 'test-room') {
+	return createSignal(fromId, {
+		signalType: 'webrtc',
+		conferenceId,
+		kind,
+		...(kind === 'ice' ? { candidate: data.candidate } : { sdp: data.sdp })
+	}, roomName);
+}
+
+// Helper pour créer une annonce de conférence
+function createAnnouncementSignal(fromId: string, announcement: ConferenceAnnouncement, roomName = 'test-room') {
+	return createSignal(fromId, {
+		signalType: 'announcement',
+		announcement
+	}, roomName);
+}
+
+// Helper pour vérifier qu'un peer-signal a été émis avec un type spécifique
+function expectSignalEmitted(socket: MockSocket, signalType: SignalType, matcher?: (signal: ConferenceSignal) => boolean) {
+	const calls = (socket.emit as ReturnType<typeof vi.fn>).mock.calls;
+	const peerSignalCalls = calls.filter(call => call[0] === 'peer-signal');
+	
+	for (const call of peerSignalCalls) {
+		const data = call[1] as { id?: string; signal?: ConferenceSignal };
+		if (data.signal?.signalType === signalType) {
+			if (!matcher || matcher(data.signal)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// Helper pour vérifier qu'un signal WebRTC a été émis
+function expectWebRTCSignalEmitted(socket: MockSocket, toId: string, kind: 'offer' | 'answer' | 'ice') {
+	const calls = (socket.emit as ReturnType<typeof vi.fn>).mock.calls;
+	const peerSignalCalls = calls.filter(call => call[0] === 'peer-signal');
+	
+	for (const call of peerSignalCalls) {
+		const data = call[1] as { id?: string; signal?: ConferenceSignal };
+		if (data.id === toId && data.signal?.signalType === 'webrtc' && data.signal?.kind === kind) {
+			return true;
+		}
+	}
+	return false;
+}
 
 // Mock Socket.IO
 function createMockSocket(): MockSocket {
@@ -111,10 +184,8 @@ describe('ConferenceManager', () => {
 		});
 
 		it('should setup socket listeners on construction', () => {
+			// Tout passe par peer-signal maintenant
 			expect(socket.on).toHaveBeenCalledWith('peer-signal', expect.any(Function));
-			expect(socket.on).toHaveBeenCalledWith('conference-announcement', expect.any(Function));
-			expect(socket.on).toHaveBeenCalledWith('conference-state-request', expect.any(Function));
-			expect(socket.on).toHaveBeenCalledWith('conference-state-response', expect.any(Function));
 		});
 	});
 
@@ -158,16 +229,20 @@ describe('ConferenceManager', () => {
 		});
 
 		it('should emit conference-started announcement', async () => {
+			// D'abord ajouter des participants à la room pour le broadcast
+			manager.updateRoomParticipants({
+				'my-socket-id': { pseudo: 'TestUser' },
+				'other-1': { pseudo: 'User1' }
+			});
+
 			await manager.startOrJoinConference();
 
-			expect(socket.emit).toHaveBeenCalledWith(
-				'conference-announcement',
-				expect.objectContaining({
-					roomName: 'test-room',
-					type: 'conference-started',
-					participantPseudo: 'TestUser'
-				})
-			);
+			// Vérifie que l'annonce a été émise via peer-signal
+			const emitted = expectSignalEmitted(socket, 'announcement', (signal) => {
+				return signal.announcement?.type === 'conference-started' && 
+				       signal.announcement?.participantPseudo === 'TestUser';
+			});
+			expect(emitted).toBe(true);
 		});
 
 		it('should leave conference', async () => {
@@ -181,16 +256,20 @@ describe('ConferenceManager', () => {
 		});
 
 		it('should emit conference-ended when last participant leaves', async () => {
+			// D'abord ajouter des participants à la room pour le broadcast
+			manager.updateRoomParticipants({
+				'my-socket-id': { pseudo: 'TestUser' },
+				'other-1': { pseudo: 'User1' }
+			});
+
 			await manager.startOrJoinConference();
 			
 			manager.leaveConference();
 
-			expect(socket.emit).toHaveBeenCalledWith(
-				'conference-announcement',
-				expect.objectContaining({
-					type: 'conference-ended'
-				})
-			);
+			const emitted = expectSignalEmitted(socket, 'announcement', (signal) => {
+				return signal.announcement?.type === 'conference-ended';
+			});
+			expect(emitted).toBe(true);
 		});
 
 		it('should handle joining an existing conference', async () => {
@@ -228,14 +307,15 @@ describe('ConferenceManager', () => {
 
 	describe('Conference announcements handling', () => {
 		it('should handle conference-started announcement', () => {
-			socket._trigger('conference-announcement', {
+			// Simuler la réception d'une annonce via peer-signal
+			socket._trigger('peer-signal', createAnnouncementSignal('other-id', {
 				type: 'conference-started',
 				conferenceId: 'new-conf',
 				participantId: 'other-id',
 				participantPseudo: 'OtherUser',
 				participants: ['other-id'],
 				timestamp: new Date().toISOString()
-			} as ConferenceAnnouncement);
+			}));
 
 			const state = manager.getState();
 			expect(state.phase).toBe('active_not_joined');
@@ -247,14 +327,14 @@ describe('ConferenceManager', () => {
 			await manager.startOrJoinConference();
 			const confId = manager.getState().conferenceId;
 
-			socket._trigger('conference-announcement', {
+			socket._trigger('peer-signal', createAnnouncementSignal('new-participant', {
 				type: 'conference-joined',
-				conferenceId: confId,
+				conferenceId: confId!,
 				participantId: 'new-participant',
 				participantPseudo: 'NewUser',
 				participants: ['my-socket-id', 'new-participant'],
 				timestamp: new Date().toISOString()
-			} as ConferenceAnnouncement);
+			}));
 
 			const state = manager.getState();
 			expect(state.participants).toContain('new-participant');
@@ -263,14 +343,14 @@ describe('ConferenceManager', () => {
 		it('should handle conference-left announcement', async () => {
 			manager.setActiveConference('conf-id', ['other-1', 'other-2']);
 
-			socket._trigger('conference-announcement', {
+			socket._trigger('peer-signal', createAnnouncementSignal('other-1', {
 				type: 'conference-left',
 				conferenceId: 'conf-id',
 				participantId: 'other-1',
 				participantPseudo: 'User1',
 				participants: ['other-2'],
 				timestamp: new Date().toISOString()
-			} as ConferenceAnnouncement);
+			}));
 
 			const state = manager.getState();
 			expect(state.participants).not.toContain('other-1');
@@ -280,14 +360,14 @@ describe('ConferenceManager', () => {
 		it('should handle conference-ended announcement', async () => {
 			manager.setActiveConference('conf-id', ['other-id']);
 
-			socket._trigger('conference-announcement', {
+			socket._trigger('peer-signal', createAnnouncementSignal('other-id', {
 				type: 'conference-ended',
 				conferenceId: 'conf-id',
 				participantId: 'other-id',
 				participantPseudo: 'OtherUser',
 				participants: [],
 				timestamp: new Date().toISOString()
-			} as ConferenceAnnouncement);
+			}));
 
 			const state = manager.getState();
 			expect(state.phase).toBe('idle');
@@ -300,46 +380,26 @@ describe('ConferenceManager', () => {
 			await manager.startOrJoinConference();
 			const confId = manager.getState().conferenceId;
 
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: confId,
-				fromId: 'my-socket-id', // From self
-				toId: 'my-socket-id',
-				signal: { type: 'offer', sdp: 'test' },
-				kind: 'offer'
-			} as PeerSignalEnvelope);
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'my-socket-id', // From self - should be ignored
+				confId!,
+				'offer',
+				{ sdp: 'test' }
+			));
 
 			// Should not have created any peer connection
 			expect(vi.mocked(navigator.mediaDevices.getUserMedia).mock.calls.length).toBe(1); // Only initial call
 		});
 
-		it('should ignore signals not addressed to self', async () => {
-			await manager.startOrJoinConference();
-			const confId = manager.getState().conferenceId;
-
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: confId,
-				fromId: 'other-id',
-				toId: 'someone-else', // Not for me
-				signal: { type: 'offer', sdp: 'test' },
-				kind: 'offer'
-			} as PeerSignalEnvelope);
-
-			// Should not process this signal
-		});
-
 		it('should ignore signals for wrong conference', async () => {
 			await manager.startOrJoinConference();
 
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: 'wrong-conf-id', // Wrong conference
-				fromId: 'other-id',
-				toId: 'my-socket-id',
-				signal: { type: 'offer', sdp: 'test' },
-				kind: 'offer'
-			} as PeerSignalEnvelope);
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'other-id',
+				'wrong-conf-id', // Wrong conference
+				'offer',
+				{ sdp: 'test' }
+			));
 
 			// Should not process this signal
 		});
@@ -348,16 +408,15 @@ describe('ConferenceManager', () => {
 			await manager.startOrJoinConference();
 			const confId = manager.getState().conferenceId;
 
-			socket._trigger('peer-signal', {
-				roomName: 'wrong-room', // Wrong room
-				conferenceId: confId,
-				fromId: 'other-id',
-				toId: 'my-socket-id',
-				signal: { type: 'offer', sdp: 'test' },
-				kind: 'offer'
-			} as PeerSignalEnvelope);
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'other-id',
+				confId!,
+				'offer',
+				{ sdp: 'test' },
+				'wrong-room' // Wrong room
+			));
 
-			// Should not process this signal
+			// Should not process this signal (message vient d'une autre room)
 		});
 	});
 
@@ -366,38 +425,34 @@ describe('ConferenceManager', () => {
 			await manager.startOrJoinConference();
 			const confId = manager.getState().conferenceId;
 
-			socket._trigger('conference-state-request', {
-				fromId: 'new-arrival',
-				roomName: 'test-room'
-			});
+			socket._trigger('peer-signal', createSignal('new-arrival', {
+				signalType: 'state-request',
+				fromId: 'new-arrival'
+			}));
 
-			expect(socket.emit).toHaveBeenCalledWith(
-				'conference-state-response',
-				expect.objectContaining({
-					roomName: 'test-room',
-					conferenceId: confId,
-					toId: 'new-arrival'
-				})
-			);
+			const emitted = expectSignalEmitted(socket, 'state-response', (signal) => {
+				return signal.conferenceId === confId;
+			});
+			expect(emitted).toBe(true);
 		});
 
 		it('should not respond to state request when not in conference', () => {
 			const emitCallCount = (socket.emit as ReturnType<typeof vi.fn>).mock.calls.length;
 
-			socket._trigger('conference-state-request', {
-				fromId: 'new-arrival',
-				roomName: 'test-room'
-			});
+			socket._trigger('peer-signal', createSignal('new-arrival', {
+				signalType: 'state-request',
+				fromId: 'new-arrival'
+			}));
 
 			expect((socket.emit as ReturnType<typeof vi.fn>).mock.calls.length).toBe(emitCallCount);
 		});
 
 		it('should handle state response', () => {
-			socket._trigger('conference-state-response', {
-				roomName: 'test-room',
+			socket._trigger('peer-signal', createSignal('other-participant', {
+				signalType: 'state-response',
 				conferenceId: 'existing-conf',
 				participants: ['other-1', 'other-2']
-			});
+			}));
 
 			const state = manager.getState();
 			expect(state.phase).toBe('active_not_joined');
@@ -405,15 +460,18 @@ describe('ConferenceManager', () => {
 		});
 
 		it('should request conference state', () => {
+			// Ajouter des participants pour que le broadcast fonctionne
+			manager.updateRoomParticipants({
+				'my-socket-id': { pseudo: 'TestUser' },
+				'other-1': { pseudo: 'User1' }
+			});
+
 			manager.requestConferenceState();
 
-			expect(socket.emit).toHaveBeenCalledWith(
-				'conference-state-request',
-				expect.objectContaining({
-					fromId: 'my-socket-id',
-					roomName: 'test-room'
-				})
-			);
+			const emitted = expectSignalEmitted(socket, 'state-request', (signal) => {
+				return signal.fromId === 'my-socket-id';
+			});
+			expect(emitted).toBe(true);
 		});
 	});
 
@@ -438,7 +496,6 @@ describe('ConferenceManager', () => {
 			manager.destroy();
 
 			expect(socket.off).toHaveBeenCalledWith('peer-signal');
-			expect(socket.off).toHaveBeenCalledWith('conference-announcement');
 		});
 	});
 
@@ -461,27 +518,20 @@ describe('ConferenceManager', () => {
 			await manager.startOrJoinConference();
 			const confId = manager.getState().conferenceId;
 
-			// Simuler la réception d'une offre valide
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: confId,
-				fromId: 'other-peer-id',
-				toId: 'my-socket-id',
-				signal: { type: 'offer', sdp: 'mock-offer-sdp' },
-				kind: 'offer'
-			} as PeerSignalEnvelope);
+			// Simuler la réception d'une offre valide via peer-signal
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'other-peer-id',
+				confId!,
+				'offer',
+				{ sdp: 'mock-offer-sdp' }
+			));
 
 			// Attendre le traitement asynchrone
 			await new Promise(resolve => setTimeout(resolve, 10));
 
-			// Devrait avoir émis une réponse (answer)
-			expect(socket.emit).toHaveBeenCalledWith(
-				'peer-signal',
-				expect.objectContaining({
-					kind: 'answer',
-					toId: 'other-peer-id'
-				})
-			);
+			// Devrait avoir émis une réponse (answer) via peer-signal
+			const emitted = expectWebRTCSignalEmitted(socket, 'other-peer-id', 'answer');
+			expect(emitted).toBe(true);
 		});
 
 		it('should process valid answer signal', async () => {
@@ -489,26 +539,24 @@ describe('ConferenceManager', () => {
 			const confId = manager.getState().conferenceId;
 
 			// Simuler qu'on a déjà une connexion peer initiée (via announcement)
-			socket._trigger('conference-announcement', {
+			socket._trigger('peer-signal', createAnnouncementSignal('other-peer-id', {
 				type: 'conference-joined',
-				conferenceId: confId,
+				conferenceId: confId!,
 				participantId: 'other-peer-id',
 				participantPseudo: 'OtherUser',
 				participants: ['my-socket-id', 'other-peer-id'],
 				timestamp: new Date().toISOString()
-			} as ConferenceAnnouncement);
+			}));
 
 			await new Promise(resolve => setTimeout(resolve, 10));
 
-			// Simuler la réception d'une réponse
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: confId,
-				fromId: 'other-peer-id',
-				toId: 'my-socket-id',
-				signal: { type: 'answer', sdp: 'mock-answer-sdp' },
-				kind: 'answer'
-			} as PeerSignalEnvelope);
+			// Simuler la réception d'une réponse via peer-signal
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'other-peer-id',
+				confId!,
+				'answer',
+				{ sdp: 'mock-answer-sdp' }
+			));
 
 			await new Promise(resolve => setTimeout(resolve, 10));
 			// Le test passe si pas d'erreur
@@ -519,26 +567,22 @@ describe('ConferenceManager', () => {
 			const confId = manager.getState().conferenceId;
 
 			// D'abord recevoir une offre pour établir la connexion
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: confId,
-				fromId: 'other-peer-id',
-				toId: 'my-socket-id',
-				signal: { type: 'offer', sdp: 'mock-offer-sdp' },
-				kind: 'offer'
-			} as PeerSignalEnvelope);
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'other-peer-id',
+				confId!,
+				'offer',
+				{ sdp: 'mock-offer-sdp' }
+			));
 
 			await new Promise(resolve => setTimeout(resolve, 10));
 
 			// Puis recevoir un candidat ICE
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: confId,
-				fromId: 'other-peer-id',
-				toId: 'my-socket-id',
-				signal: { candidate: { candidate: 'mock-candidate', sdpMid: '0', sdpMLineIndex: 0 } },
-				kind: 'ice'
-			} as PeerSignalEnvelope);
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'other-peer-id',
+				confId!,
+				'ice',
+				{ candidate: { candidate: 'mock-candidate', sdpMid: '0', sdpMLineIndex: 0 } }
+			));
 
 			await new Promise(resolve => setTimeout(resolve, 10));
 			// Le test passe si pas d'erreur
@@ -549,14 +593,12 @@ describe('ConferenceManager', () => {
 			const confId = manager.getState().conferenceId;
 
 			// Envoyer un candidat ICE AVANT l'offre (cas edge)
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: confId,
-				fromId: 'other-peer-id',
-				toId: 'my-socket-id',
-				signal: { candidate: { candidate: 'mock-candidate', sdpMid: '0', sdpMLineIndex: 0 } },
-				kind: 'ice'
-			} as PeerSignalEnvelope);
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'other-peer-id',
+				confId!,
+				'ice',
+				{ candidate: { candidate: 'mock-candidate', sdpMid: '0', sdpMLineIndex: 0 } }
+			));
 
 			// Le candidat devrait être mis en buffer (pas d'erreur)
 			await new Promise(resolve => setTimeout(resolve, 10));
@@ -567,30 +609,17 @@ describe('ConferenceManager', () => {
 			const confId = manager.getState().conferenceId;
 
 			// Créer une connexion peer via offre
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: confId,
-				fromId: 'other-peer-id',
-				toId: 'my-socket-id',
-				signal: { type: 'offer', sdp: 'mock-offer-sdp' },
-				kind: 'offer'
-			} as PeerSignalEnvelope);
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'other-peer-id',
+				confId!,
+				'offer',
+				{ sdp: 'mock-offer-sdp' }
+			));
 
 			await new Promise(resolve => setTimeout(resolve, 10));
 
 			// Simuler une déconnexion du peer via l'état de connexion
 			// (le mock RTCPeerConnection a onconnectionstatechange)
-		});
-
-		it('should emit ICE candidates when available', async () => {
-			await manager.startOrJoinConference();
-			
-			// Les candidats ICE sont émis via le callback onicecandidate du peer
-			// Ce test vérifie que la structure est correcte
-			expect(socket.emit).toHaveBeenCalledWith(
-				'conference-announcement',
-				expect.any(Object)
-			);
 		});
 	});
 
@@ -601,54 +630,68 @@ describe('ConferenceManager', () => {
 
 			await manager.startOrJoinConference();
 
-			// Devrait avoir émis des offres vers les 2 participants existants
+			// Devrait avoir émis des offres vers les 2 participants existants via peer-signal
 			const emitCalls = (socket.emit as ReturnType<typeof vi.fn>).mock.calls;
 			const peerSignalCalls = emitCalls.filter(call => call[0] === 'peer-signal');
 			
-			// Au moins 2 offres (une par participant)
-			const offerCalls = peerSignalCalls.filter(call => call[1]?.kind === 'offer');
-			expect(offerCalls.length).toBeGreaterThanOrEqual(2);
+			// Compter les offres WebRTC
+			let offerCount = 0;
+			for (const call of peerSignalCalls) {
+				const data = call[1] as { signal?: ConferenceSignal };
+				if (data.signal?.signalType === 'webrtc' && data.signal?.kind === 'offer') {
+					offerCount++;
+				}
+			}
+			expect(offerCount).toBeGreaterThanOrEqual(2);
 		});
 
 		it('should emit conference-joined when joining existing conference', async () => {
+			// Ajouter des participants pour le broadcast
+			manager.updateRoomParticipants({
+				'my-socket-id': { pseudo: 'TestUser' },
+				'other-1': { pseudo: 'User1' }
+			});
 			manager.setActiveConference('existing-conf', ['other-1']);
 
 			await manager.startOrJoinConference();
 
-			expect(socket.emit).toHaveBeenCalledWith(
-				'conference-announcement',
-				expect.objectContaining({
-					type: 'conference-joined',
-					conferenceId: 'existing-conf'
-				})
-			);
+			const emitted = expectSignalEmitted(socket, 'announcement', (signal) => {
+				return signal.announcement?.type === 'conference-joined' && 
+				       signal.announcement?.conferenceId === 'existing-conf';
+			});
+			expect(emitted).toBe(true);
 		});
 	});
 
 	describe('Leave conference scenarios', () => {
 		it('should emit conference-left when others remain', async () => {
+			// Ajouter des participants pour le broadcast
+			manager.updateRoomParticipants({
+				'my-socket-id': { pseudo: 'TestUser' },
+				'other-1': { pseudo: 'User1' },
+				'other-2': { pseudo: 'User2' }
+			});
+
 			// Rejoindre une conf existante
 			manager.setActiveConference('conf-with-others', ['other-1', 'other-2']);
 			await manager.startOrJoinConference();
 
 			// Simuler que les autres sont toujours là
-			socket._trigger('conference-announcement', {
+			socket._trigger('peer-signal', createAnnouncementSignal('other-1', {
 				type: 'conference-joined',
 				conferenceId: 'conf-with-others',
 				participantId: 'other-1',
 				participantPseudo: 'User1',
 				participants: ['my-socket-id', 'other-1', 'other-2'],
 				timestamp: new Date().toISOString()
-			} as ConferenceAnnouncement);
+			}));
 
 			manager.leaveConference();
 
-			expect(socket.emit).toHaveBeenCalledWith(
-				'conference-announcement',
-				expect.objectContaining({
-					type: 'conference-left'
-				})
-			);
+			const emitted = expectSignalEmitted(socket, 'announcement', (signal) => {
+				return signal.announcement?.type === 'conference-left';
+			});
+			expect(emitted).toBe(true);
 
 			// Devrait rester en active_not_joined
 			const finalState = stateChanges[stateChanges.length - 1];
@@ -659,15 +702,13 @@ describe('ConferenceManager', () => {
 			await manager.startOrJoinConference();
 			const confId = manager.getState().conferenceId;
 
-			// Établir une connexion peer
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: confId,
-				fromId: 'other-peer-id',
-				toId: 'my-socket-id',
-				signal: { type: 'offer', sdp: 'mock-offer-sdp' },
-				kind: 'offer'
-			} as PeerSignalEnvelope);
+			// Établir une connexion peer via peer-signal
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'other-peer-id',
+				confId!,
+				'offer',
+				{ sdp: 'mock-offer-sdp' }
+			));
 
 			await new Promise(resolve => setTimeout(resolve, 10));
 
@@ -684,21 +725,23 @@ describe('ConferenceManager', () => {
 			await manager.startOrJoinConference();
 			const emitCallCount = (socket.emit as ReturnType<typeof vi.fn>).mock.calls.length;
 
-			socket._trigger('conference-state-request', {
+			socket._trigger('peer-signal', createSignal('new-arrival', {
+				signalType: 'state-request',
 				fromId: 'new-arrival',
 				roomName: 'wrong-room'
-			});
+			}, 'wrong-room'));
 
 			// Pas de nouvelle émission
 			expect((socket.emit as ReturnType<typeof vi.fn>).mock.calls.length).toBe(emitCallCount);
 		});
 
 		it('should ignore state response for wrong room', () => {
-			socket._trigger('conference-state-response', {
+			socket._trigger('peer-signal', createSignal('other-id', {
+				signalType: 'state-response',
 				roomName: 'wrong-room',
 				conferenceId: 'some-conf',
 				participants: ['other-1']
-			});
+			}, 'wrong-room'));
 
 			const state = manager.getState();
 			expect(state.phase).toBe('idle');
@@ -707,11 +750,12 @@ describe('ConferenceManager', () => {
 		it('should ignore state response when not idle', async () => {
 			await manager.startOrJoinConference();
 
-			socket._trigger('conference-state-response', {
+			socket._trigger('peer-signal', createSignal('other-id', {
+				signalType: 'state-response',
 				roomName: 'test-room',
 				conferenceId: 'another-conf',
 				participants: ['other-1']
-			});
+			}));
 
 			// Devrait garder la conf actuelle
 			const state = manager.getState();
@@ -731,14 +775,14 @@ describe('ConferenceManager', () => {
 		it('should ignore announcement for different conference', async () => {
 			manager.setActiveConference('my-conf', ['other-1']);
 
-			socket._trigger('conference-announcement', {
+			socket._trigger('peer-signal', createAnnouncementSignal('other-2', {
 				type: 'conference-left',
 				conferenceId: 'different-conf',
 				participantId: 'other-1',
 				participantPseudo: 'User1',
 				participants: [],
 				timestamp: new Date().toISOString()
-			} as ConferenceAnnouncement);
+			}));
 
 			// L'état ne devrait pas changer
 			const state = manager.getState();
@@ -751,24 +795,24 @@ describe('ConferenceManager', () => {
 			const confId = manager.getState().conferenceId;
 
 			// Ajouter un autre participant
-			socket._trigger('conference-announcement', {
+			socket._trigger('peer-signal', createAnnouncementSignal('other-1', {
 				type: 'conference-joined',
-				conferenceId: confId,
+				conferenceId: confId!,
 				participantId: 'other-1',
 				participantPseudo: 'User1',
 				participants: ['my-socket-id', 'other-1'],
 				timestamp: new Date().toISOString()
-			} as ConferenceAnnouncement);
+			}));
 
 			// L'autre quitte
-			socket._trigger('conference-announcement', {
+			socket._trigger('peer-signal', createAnnouncementSignal('other-1', {
 				type: 'conference-left',
-				conferenceId: confId,
+				conferenceId: confId!,
 				participantId: 'other-1',
 				participantPseudo: 'User1',
 				participants: ['my-socket-id'],
 				timestamp: new Date().toISOString()
-			} as ConferenceAnnouncement);
+			}));
 
 			// La conf devrait se terminer (dernier participant)
 			const state = manager.getState();
@@ -786,14 +830,14 @@ describe('ConferenceManager', () => {
 			});
 
 			// Ajouter other-1 à la conférence
-			socket._trigger('conference-announcement', {
+			socket._trigger('peer-signal', createAnnouncementSignal('other-1', {
 				type: 'conference-joined',
-				conferenceId: confId,
+				conferenceId: confId!,
 				participantId: 'other-1',
 				participantPseudo: 'User1',
 				participants: ['my-socket-id', 'other-1'],
 				timestamp: new Date().toISOString()
-			} as ConferenceAnnouncement);
+			}));
 
 			// other-1 se déconnecte de la room
 			manager.removeRoomParticipant('other-1');
@@ -803,15 +847,13 @@ describe('ConferenceManager', () => {
 		});
 
 		it('should ignore signals when not in joining or joined phase', () => {
-			// En phase idle
-			socket._trigger('peer-signal', {
-				roomName: 'test-room',
-				conferenceId: 'some-conf',
-				fromId: 'other-id',
-				toId: 'my-socket-id',
-				signal: { type: 'offer', sdp: 'test' },
-				kind: 'offer'
-			} as PeerSignalEnvelope);
+			// En phase idle - utilise peer-signal
+			socket._trigger('peer-signal', createWebRTCSignal(
+				'other-id',
+				'some-conf',
+				'offer',
+				{ sdp: 'test' }
+			));
 
 			// Pas d'erreur, signal simplement ignoré
 		});
