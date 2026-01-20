@@ -2,7 +2,21 @@
 
 Application web progressive (PWA) de messagerie **en temps réel** avec **capture photo**, développée avec **SvelteKit 2** et **Svelte 5**.
 
-Démo : https://samuel.landais.angers.mds-project.fr
+Site en prod : https://samuel.landais.angers.mds-project.fr
+
+## Sommaire
+
+- [Chat Client PWA](#chat-client-pwa)
+  - [Aperçu](#aperçu)
+  - [Stack](#stack)
+  - [Installation](#installation)
+  - [Scripts](#scripts-principal)
+  - [Architecture](#architecture)
+  - [API externe](#api-externe)
+  - [PWA et hors ligne](#pwa-et-hors-ligne)
+  - [Tests](#tests)
+  - [Déploiement](#déploiement)
+  - [Clés localStorage](#clés-localstorage)
 
 ## Aperçu
 
