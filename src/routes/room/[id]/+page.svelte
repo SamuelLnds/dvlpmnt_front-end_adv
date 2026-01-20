@@ -12,19 +12,19 @@
 	import { readPhotos, addPhotoFromDataURL, type PhotoItem } from '$lib/storage/photos';
 
 	import CameraCapture from '$lib/components/CameraCapture.svelte';
-	import CallPanel from '$lib/components/CallPanel.svelte';
+	import ConferencePanel from '$lib/components/ConferencePanel.svelte';
 	import { loadingStore } from '$lib/stores/loading';
-	import { CallManager, type CallState, type Participant } from '$lib/services/webrtc';
+	import { ConferenceManager, type ConferenceState, type ConferenceParticipant, type ConferenceAnnouncement } from '$lib/services/conference';
 	let camRef: InstanceType<typeof CameraCapture> | null = null;
-	let callPanelRef: { setRemoteStream: (stream: MediaStream | null) => void } | null = null;
+	let conferencePanelRef: { setRemoteStream: (peerId: string, stream: MediaStream | null) => void } | null = null;
 
 	export let data: PageData;
 	const roomId = data.roomId;
 
-	// État pour la gestion des appels WebRTC
-	let callManager: CallManager | null = null;
-	let callParticipants: Participant[] = [];
-	let callState: CallState = { phase: 'idle' };
+	// État pour la gestion des conférences WebRTC
+	let conferenceManager: ConferenceManager | null = null;
+	let conferenceParticipants: ConferenceParticipant[] = [];
+	let conferenceState: ConferenceState = { phase: 'idle', conferenceId: null, participants: [] };
 
 	type ChatMsg = {
 		content: string;
@@ -255,7 +255,7 @@
 		connecting: 'Connexion...',
 		connected: 'Connecté',
 		reconnecting: 'Reconnexion...',
-		disconnected: 'Deconnecté',
+		disconnected: 'Déconnecté',
 	};
 
 	$: statusText = statusLabels[status];
@@ -371,26 +371,25 @@
 				await syncProfileAvatar(mySocketId, pseudo);
 				void ensureAvatarForKey(myRemoteKey);
 
-				// Initialisation du gestionnaire d'appels WebRTC
-				callManager = new CallManager(socket, roomId, pseudo ?? '', {
+				// Initialisation du gestionnaire de conférence WebRTC
+				conferenceManager = new ConferenceManager(socket, roomId, pseudo ?? '', {
 					onStateChange: (state) => {
-						callState = state;
-						// Notification d'appel entrant
-						if (state.phase === 'incoming') {
-							notifyAndVibrate(
-								`Appel de ${state.peerPseudo ?? 'un participant'}`,
-								{ body: 'Cliquez pour répondre' },
-								[200, 100, 200, 100, 200]
-							);
-						}
+						conferenceState = state;
 					},
-					onRemoteStream: (stream) => {
-						callPanelRef?.setRemoteStream(stream);
+					onRemoteStream: (peerId, stream) => {
+						conferencePanelRef?.setRemoteStream(peerId, stream);
 					},
 					onParticipantsChange: (participants) => {
-						callParticipants = participants;
+						conferenceParticipants = participants;
+					},
+					onAnnouncement: (announcement) => {
+						handleConferenceAnnouncement(announcement);
+					},
+					onError: (error) => {
+						console.error('[Conference] Error:', error);
 					}
 				});
+				conferenceManager.setMySocketId(mySocketId);
 
 				socket.emit('chat-join-room', { pseudo, roomName: roomId });
 			});
@@ -409,20 +408,30 @@
 
 			socket.on(
 				'chat-joined-room',
-				(payload: { clients?: Record<string, { pseudo?: string }> }) => {
+				(payload: { clients?: Record<string, { pseudo?: string }>; conference?: { conferenceId: string; participants: string[] } }) => {
 					indexClients(payload?.clients);
-					// Mise à jour de la liste des participants pour les appels
+					// Mise à jour de la liste des participants pour la conférence
 					if (payload?.clients && mySocketId) {
-						callManager?.updateParticipants(payload.clients, mySocketId);
+						conferenceManager?.updateRoomParticipants(payload.clients);
+					}
+					// Si une conférence est en cours (info serveur), informer le manager
+					if (payload?.conference?.conferenceId) {
+						conferenceManager?.setActiveConference(payload.conference.conferenceId, payload.conference.participants);
+					} else {
+						// Fallback client: demander l'état aux autres participants
+						// (si le serveur ne conserve pas l'état de conférence)
+						setTimeout(() => {
+							conferenceManager?.requestConferenceState();
+						}, 500);
 					}
 				}
 			);
 
 			socket.on('chat-disconnected', (payload: { id?: string; pseudo?: string }) => {
 				dropClient(payload?.id, payload?.pseudo);
-				// Retrait du participant de la liste d'appel
+				// Retrait du participant de la conférence
 				if (payload?.id) {
-					callManager?.removeParticipant(payload.id);
+					conferenceManager?.removeRoomParticipant(payload.id);
 				}
 			});
 
@@ -497,13 +506,55 @@
 	});
 
 	onDestroy(() => {
-		callManager?.destroy();
-		callManager = null;
+		conferenceManager?.destroy();
+		conferenceManager = null;
 		const socket = getSocket();
 		socket.removeAllListeners();
 		socket.disconnect();
 		camRef?.close();
 	});
+
+	// Gestion des annonces de conférence (affichage dans le chat)
+	function handleConferenceAnnouncement(announcement: ConferenceAnnouncement) {
+		let content = '';
+		const pseudo = announcement.participantPseudo || 'Un participant';
+		const count = announcement.participants.length;
+		
+		switch (announcement.type) {
+			case 'conference-started':
+				content = `🎙️ ${pseudo} a démarré une conférence audio`;
+				break;
+			case 'conference-ended':
+				content = `🔇 La conférence audio est terminée`;
+				break;
+			case 'conference-joined':
+				content = `🎤 ${pseudo} a rejoint la conférence (${count} participant${count > 1 ? 's' : ''})`;
+				break;
+			case 'conference-left':
+				content = `🔇 ${pseudo} a quitté la conférence`;
+				break;
+		}
+		
+		const msg: ChatMsg = {
+			content,
+			dateEmis: announcement.timestamp,
+			roomName: roomId,
+			categorie: 'INFO',
+			pseudo: 'Système'
+		};
+		
+		const shouldStick = isNearBottom();
+		messages = [...messages, msg];
+		
+		if (shouldStick) {
+			tick().then(() => {
+				scrollToBottom(true);
+				updateJumpButton();
+			});
+		} else {
+			updateJumpButton();
+		}
+	}
 
 	function emitMessage(content: string) {
 		const payload: ChatMsg = { content, roomName: roomId, categorie: 'MESSAGE' };
@@ -648,15 +699,13 @@
 		</div>
 	</form>
 
-	<!-- Panneau d'appel flottant -->
-	<CallPanel
-		bind:this={callPanelRef}
-		participants={callParticipants}
-		{callState}
-		onCall={(p) => callManager?.call(p)}
-		onAccept={() => callManager?.acceptCall()}
-		onReject={() => callManager?.rejectCall()}
-		onHangup={() => callManager?.hangup()}
+	<!-- Panneau de conférence audio -->
+	<ConferencePanel
+		bind:this={conferencePanelRef}
+		participants={conferenceParticipants}
+		{conferenceState}
+		onJoin={() => conferenceManager?.startOrJoinConference()}
+		onLeave={() => conferenceManager?.leaveConference()}
 	/>
 
 	{#if pickerOpen}
