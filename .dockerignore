@@ -1,0 +1,16 @@
+node_modules
+.svelte-kit
+build
+dist
+coverage
+.storybook
+playwright-report
+test-results
+.DS_Store
+.git
+.env
+.env.*
+npm-debug.log
+pnpm-debug.log
+yarn-debug.log
+yarn-error.log
