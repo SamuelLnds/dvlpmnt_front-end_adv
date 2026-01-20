@@ -25,6 +25,7 @@ src/
 │   │   ├── rooms.ts       # Rooms + préférences (source unique type Room)
 │   │   └── chat.ts        # Messages + helpers (importe Room depuis rooms.ts)
 │   ├── utils/        # Fonctions pures et validations
+│   │   ├── index.ts       # Barrel exports utils
 │   │   ├── validation.ts  # safeParse, isDataUrl
 │   │   ├── format.ts      # formatRoomName
 │   │   ├── merge.ts       # mergeRemoteWithStored, type Room
@@ -239,6 +240,7 @@ import { getSocket } from '$lib/services/socket';
 **Fichiers barrel disponibles** :
 - `$lib/index.ts` : Tous les exports de lib/
 - `$lib/services/index.ts` : device, socket
+- `$lib/utils/index.ts` : validation, format, download, merge
 
 ## Commandes npm
 
