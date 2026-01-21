@@ -19,12 +19,23 @@ describe('readRooms', () => {
 
 	it('lit correctement les rooms stockées', () => {
 		const rooms: Room[] = [
-			{ id: 'general', name: 'General', joined: true },
-			{ id: 'random', name: 'Random', joined: false }
+			{ id: 'general', name: 'General', joined: true, private: false, clientCount: 0 },
+			{ id: 'random', name: 'Random', joined: false, private: false, clientCount: 0 }
 		];
 		localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms));
 
 		expect(readRooms()).toEqual(rooms);
+	});
+
+	it('ajoute private et clientCount par défaut si absents', () => {
+		const oldRooms = [
+			{ id: 'general', name: 'General', joined: true }
+		];
+		localStorage.setItem(ROOMS_KEY, JSON.stringify(oldRooms));
+
+		const result = readRooms();
+		expect(result[0].private).toBe(false);
+		expect(result[0].clientCount).toBe(0);
 	});
 
 	it('filtre les entrées invalides', () => {
@@ -44,7 +55,7 @@ describe('readRooms', () => {
 
 describe('writeRooms', () => {
 	it('écrit les rooms dans localStorage', () => {
-		const rooms: Room[] = [{ id: 'test', name: 'Test', joined: true }];
+		const rooms: Room[] = [{ id: 'test', name: 'Test', joined: true, private: false, clientCount: 0 }];
 		writeRooms(rooms);
 
 		expect(localStorage.getItem(ROOMS_KEY)).toBe(JSON.stringify(rooms));
@@ -55,7 +66,7 @@ describe('writeRooms', () => {
 			throw new Error('QuotaExceededError');
 		});
 
-		expect(() => writeRooms([{ id: 'test', name: 'Test', joined: true }])).not.toThrow();
+		expect(() => writeRooms([{ id: 'test', name: 'Test', joined: true, private: false, clientCount: 0 }])).not.toThrow();
 	});
 });
 
@@ -111,8 +122,8 @@ describe('writeMessages', () => {
 describe('unsubscribeRoom', () => {
 	it('met joined à false pour la room ciblée', () => {
 		const rooms: Room[] = [
-			{ id: 'general', name: 'General', joined: true },
-			{ id: 'random', name: 'Random', joined: true }
+			{ id: 'general', name: 'General', joined: true, private: false, clientCount: 0 },
+			{ id: 'random', name: 'Random', joined: true, private: false, clientCount: 0 }
 		];
 		localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms));
 

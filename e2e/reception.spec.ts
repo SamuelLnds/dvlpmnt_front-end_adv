@@ -186,4 +186,104 @@ test.describe('Page Réception (/reception)', () => {
 			expect(authenticatedPage.url()).not.toContain('/room/');
 		});
 	});
+
+	// =========================================================================
+	// MODAL DE CRÉATION DE ROOM (CreateRoomModal)
+	// =========================================================================
+
+	test.describe('Modal de création de room', () => {
+		test('le toggle mode privé affiche les champs de mot de passe', async ({ authenticatedPage }) => {
+			await authenticatedPage.goto('/reception');
+			
+			// Attendre que la page soit chargée
+			await expect(authenticatedPage.locator('h1')).toContainText('Réception');
+			await authenticatedPage.waitForTimeout(500);
+
+			// Saisir un nom de room unique qui n'existe certainement pas
+			const uniqueRoomName = `test-room-${Date.now()}`;
+			const input = authenticatedPage.locator('input[placeholder*="room"]');
+			await input.fill(uniqueRoomName);
+
+			// Cliquer sur Rejoindre pour ouvrir le modal CreateRoomModal
+			const submitBtn = authenticatedPage.locator('form button[type="submit"]');
+			await submitBtn.click();
+
+			// Attendre que le modal s'ouvre - le heading "Créer une room" devrait apparaître
+			const modalHeading = authenticatedPage.getByRole('heading', { name: /créer une room/i });
+			await expect(modalHeading).toBeVisible({ timeout: 10000 });
+
+			// État initial : toggle switch visible, champs mdp non visibles
+			// Le checkbox input est caché via CSS, on utilise le label/switch pour interagir
+			const toggleSwitch = authenticatedPage.locator('.toggle-switch');
+			await expect(toggleSwitch).toBeVisible();
+			await expect(authenticatedPage.locator('#create-password')).not.toBeVisible();
+
+			// Activer le mode privé en cliquant sur le toggle switch
+			await toggleSwitch.click();
+
+			// Les champs de mot de passe doivent être visibles
+			await expect(authenticatedPage.locator('#create-password')).toBeVisible();
+			await expect(authenticatedPage.locator('#confirm-password')).toBeVisible();
+		});
+
+		test('le toggle peut être basculé plusieurs fois sans flash', async ({ authenticatedPage }) => {
+			await authenticatedPage.goto('/reception');
+			await expect(authenticatedPage.locator('h1')).toContainText('Réception');
+			await authenticatedPage.waitForTimeout(500);
+
+			// Ouvrir le modal avec une room unique
+			const uniqueRoomName = `toggle-test-${Date.now()}`;
+			const input = authenticatedPage.locator('input[placeholder*="room"]');
+			await input.fill(uniqueRoomName);
+			await authenticatedPage.locator('form button[type="submit"]').click();
+			await expect(authenticatedPage.getByRole('heading', { name: /créer une room/i })).toBeVisible({ timeout: 10000 });
+
+			const toggleSwitch = authenticatedPage.locator('.toggle-switch');
+
+			// Toggle 1: privé
+			await toggleSwitch.click();
+			await expect(authenticatedPage.locator('#create-password')).toBeVisible();
+
+			// Toggle 2: public
+			await toggleSwitch.click();
+			await expect(authenticatedPage.locator('#create-password')).not.toBeVisible();
+
+			// Toggle 3: privé à nouveau
+			await toggleSwitch.click();
+			await expect(authenticatedPage.locator('#create-password')).toBeVisible();
+
+			// Attendre un peu et vérifier la stabilité (pas de flash)
+			await authenticatedPage.waitForTimeout(500);
+			await expect(authenticatedPage.locator('#create-password')).toBeVisible();
+		});
+
+		test('les champs de mot de passe restent visibles après saisie', async ({ authenticatedPage }) => {
+			await authenticatedPage.goto('/reception');
+			await expect(authenticatedPage.locator('h1')).toContainText('Réception');
+			await authenticatedPage.waitForTimeout(500);
+
+			// Ouvrir le modal avec une room unique
+			const uniqueRoomName = `password-test-${Date.now()}`;
+			const input = authenticatedPage.locator('input[placeholder*="room"]');
+			await input.fill(uniqueRoomName);
+			await authenticatedPage.locator('form button[type="submit"]').click();
+			await expect(authenticatedPage.getByRole('heading', { name: /créer une room/i })).toBeVisible({ timeout: 10000 });
+
+			// Activer le mode privé
+			const toggleSwitch = authenticatedPage.locator('.toggle-switch');
+			await toggleSwitch.click();
+
+			// Saisir un mot de passe
+			const passwordField = authenticatedPage.locator('#create-password');
+			await expect(passwordField).toBeVisible();
+			await passwordField.fill('test123');
+
+			// Attendre et vérifier la stabilité
+			await authenticatedPage.waitForTimeout(300);
+			await expect(passwordField).toBeVisible();
+			await expect(passwordField).toHaveValue('test123');
+			// Vérifier que le mode privé est toujours actif
+			await expect(authenticatedPage.locator('#confirm-password')).toBeVisible();
+		});
+	});
 });

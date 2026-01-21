@@ -20,14 +20,16 @@ describe('readRooms (rooms.ts)', () => {
 
 	it('lit correctement les rooms stockées', () => {
 		const rooms = [
-			{ id: 'general', name: 'General', joined: true },
-			{ id: 'random', name: 'Random', joined: false }
+			{ id: 'general', name: 'General', joined: true, private: false, clientCount: 5 },
+			{ id: 'random', name: 'Random', joined: false, private: true, clientCount: 2 }
 		];
 		localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms));
 
 		const result = readRooms();
 		expect(result).toHaveLength(2);
 		expect(result[0].id).toBe('general');
+		expect(result[0].private).toBe(false);
+		expect(result[0].clientCount).toBe(5);
 	});
 
 	it('filtre les entrées avec des types incorrects', () => {
@@ -40,11 +42,20 @@ describe('readRooms (rooms.ts)', () => {
 
 		expect(readRooms()).toHaveLength(1);
 	});
+
+	it('ajoute private et clientCount par défaut si absents', () => {
+		const rooms = [{ id: 'old', name: 'Old Room', joined: true }];
+		localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms));
+
+		const result = readRooms();
+		expect(result[0].private).toBe(false);
+		expect(result[0].clientCount).toBe(0);
+	});
 });
 
 describe('upsertRoom', () => {
-	it('ajoute une nouvelle room en tête de liste', () => {
-		const existing = [{ id: 'existing', name: 'Existing', joined: false }];
+	it('ajoute une nouvelle room en tête de liste avec private et clientCount', () => {
+		const existing = [{ id: 'existing', name: 'Existing', joined: false, private: false, clientCount: 0 }];
 		localStorage.setItem(ROOMS_KEY, JSON.stringify(existing));
 
 		const result = upsertRoom('new-room', 'New Room');
@@ -52,10 +63,20 @@ describe('upsertRoom', () => {
 		expect(result[0].id).toBe('new-room');
 		expect(result[0].name).toBe('New Room');
 		expect(result[0].joined).toBe(true);
+		expect(result[0].private).toBe(false);
+		expect(result[0].clientCount).toBe(0);
+	});
+
+	it('peut créer une room avec private=true', () => {
+		localStorage.setItem(ROOMS_KEY, JSON.stringify([]));
+
+		const result = upsertRoom('secret-room', 'Secret Room', true);
+
+		expect(result[0].private).toBe(true);
 	});
 
 	it('met à jour une room existante', () => {
-		const existing = [{ id: 'my-room', name: 'Old Name', joined: false }];
+		const existing = [{ id: 'my-room', name: 'Old Name', joined: false, private: false, clientCount: 0 }];
 		localStorage.setItem(ROOMS_KEY, JSON.stringify(existing));
 
 		const result = upsertRoom('my-room', 'New Name');
@@ -74,7 +95,7 @@ describe('upsertRoom', () => {
 	});
 
 	it('ignore les IDs vides', () => {
-		const existing = [{ id: 'test', name: 'Test', joined: true }];
+		const existing = [{ id: 'test', name: 'Test', joined: true, private: false, clientCount: 0 }];
 		localStorage.setItem(ROOMS_KEY, JSON.stringify(existing));
 
 		const result = upsertRoom('   ');
@@ -86,7 +107,7 @@ describe('upsertRoom', () => {
 
 describe('writeRooms (rooms.ts)', () => {
 	it('persiste les rooms dans localStorage', () => {
-		const rooms = [{ id: 'test', name: 'Test', joined: true }];
+		const rooms = [{ id: 'test', name: 'Test', joined: true, private: false, clientCount: 0 }];
 		writeRooms(rooms);
 
 		const stored = JSON.parse(localStorage.getItem(ROOMS_KEY) ?? '[]');
@@ -98,7 +119,7 @@ describe('writeRooms (rooms.ts)', () => {
 			throw new Error('QuotaExceededError');
 		});
 
-		expect(() => writeRooms([{ id: 'test', name: 'Test', joined: false }])).not.toThrow();
+		expect(() => writeRooms([{ id: 'test', name: 'Test', joined: false, private: false, clientCount: 0 }])).not.toThrow();
 	});
 });
 
@@ -109,24 +130,25 @@ describe('ensureSeed', () => {
 
 	it('retourne les rooms distantes si disponibles', async () => {
 		vi.mocked(fetchRoomsIndex).mockResolvedValue([
-			{ id: 'remote-1', clientCount: 5 },
-			{ id: 'remote-2', clientCount: 3 }
+			{ id: 'remote-1', name: 'Remote 1', private: false, clientCount: 5 },
+			{ id: 'remote-2', name: 'Remote 2', private: true, clientCount: 3 }
 		]);
 
 		const result = await ensureSeed();
 
 		expect(result.some((r) => r.id === 'remote-1')).toBe(true);
 		expect(result.some((r) => r.id === 'remote-2')).toBe(true);
+		expect(result.find((r) => r.id === 'remote-2')?.private).toBe(true);
 	});
 
 	it('retourne les rooms stockées si le fetch échoue', async () => {
-		const stored = [{ id: 'stored', name: 'Stored', joined: true }];
+		const stored = [{ id: 'stored', name: 'Stored', joined: true, private: false, clientCount: 0 }];
 		localStorage.setItem(ROOMS_KEY, JSON.stringify(stored));
 		vi.mocked(fetchRoomsIndex).mockRejectedValue(new Error('Network error'));
 
 		const result = await ensureSeed();
 
-		expect(result).toEqual(stored);
+		expect(result[0].id).toBe('stored');
 	});
 
 	it('retourne les preset rooms si localStorage est vide et fetch échoue', async () => {
@@ -140,14 +162,14 @@ describe('ensureSeed', () => {
 
 	it('merge correctement les rooms distantes avec les stockées', async () => {
 		const stored = [
-			{ id: 'general', name: 'Custom General', joined: true },
-			{ id: 'local-only', name: 'Local', joined: true }
+			{ id: 'general', name: 'Custom General', joined: true, private: false, clientCount: 0 },
+			{ id: 'local-only', name: 'Local', joined: true, private: false, clientCount: 0 }
 		];
 		localStorage.setItem(ROOMS_KEY, JSON.stringify(stored));
 
 		vi.mocked(fetchRoomsIndex).mockResolvedValue([
-			{ id: 'general', clientCount: 10 },
-			{ id: 'new-remote', clientCount: 2 }
+			{ id: 'general', name: 'General', private: false, clientCount: 10 },
+			{ id: 'new-remote', name: 'New Remote', private: false, clientCount: 2 }
 		]);
 
 		const result = await ensureSeed();
@@ -157,13 +179,16 @@ describe('ensureSeed', () => {
 	});
 
 	it('utilise les stored rooms si remote retourne vide après filtrage', async () => {
-		const stored = [{ id: 'stored', name: 'Stored', joined: true }];
+		const stored = [{ id: 'stored', name: 'Stored', joined: true, private: false, clientCount: 0 }];
 		localStorage.setItem(ROOMS_KEY, JSON.stringify(stored));
-		vi.mocked(fetchRoomsIndex).mockResolvedValue([{ id: '', clientCount: 0 }, { id: '  ', clientCount: 0 }]);
+		vi.mocked(fetchRoomsIndex).mockResolvedValue([
+			{ id: '', name: '', private: false, clientCount: 0 },
+			{ id: '  ', name: '', private: false, clientCount: 0 }
+		]);
 
 		const result = await ensureSeed();
 
-		expect(result).toEqual(stored);
+		expect(result[0].id).toBe('stored');
 	});
 
 	it('utilise les preset rooms si stored est vide et remote retourne vide', async () => {

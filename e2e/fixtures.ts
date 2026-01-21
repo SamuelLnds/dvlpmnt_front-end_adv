@@ -42,8 +42,9 @@ export interface TestLocation {
 export interface TestRoom {
 	id: string;
 	name: string;
-	addedAt?: number;
-	clients?: number;
+	joined: boolean;
+	private: boolean;
+	clientCount: number;
 }
 
 /**
@@ -330,10 +331,11 @@ export const TEST_DATA = {
 	 * Rooms de test
 	 */
 	rooms: {
-		general: { id: 'general', name: 'Général' },
-		random: { id: 'random', name: 'Aléatoire' },
-		tech: { id: 'tech', name: 'Tech' },
-		custom: { id: 'custom-room', name: 'Custom Room' },
+		general: { id: 'general', name: 'Général', joined: true, private: false, clientCount: 0 },
+		random: { id: 'random', name: 'Aléatoire', joined: true, private: false, clientCount: 0 },
+		tech: { id: 'tech', name: 'Tech', joined: false, private: false, clientCount: 5 },
+		custom: { id: 'custom-room', name: 'Custom Room', joined: false, private: false, clientCount: 0 },
+		private: { id: 'private-room', name: 'Private Room', joined: false, private: true, clientCount: 3 },
 	},
 
 	/**

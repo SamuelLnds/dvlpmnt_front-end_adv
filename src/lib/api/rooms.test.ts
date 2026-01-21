@@ -10,12 +10,12 @@ describe('fetchRoomsIndex', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('retourne une liste de rooms avec leur nombre de clients', async () => {
+	it('retourne une liste de rooms avec leur nombre de clients, nom et statut private', async () => {
 		const mockResponse = {
 			success: true,
 			data: {
-				general: { clients: { client1: {}, client2: {} } },
-				random: { clients: { client3: {} } }
+				general: { clients: { client1: {}, client2: {} }, name: 'General', private: false },
+				private_room: { clients: { client3: {} }, name: 'Private Room', private: true }
 			}
 		};
 
@@ -27,16 +27,16 @@ describe('fetchRoomsIndex', () => {
 		const result = await fetchRoomsIndex();
 
 		expect(result).toHaveLength(2);
-		expect(result).toContainEqual({ id: 'general', clientCount: 2 });
-		expect(result).toContainEqual({ id: 'random', clientCount: 1 });
+		expect(result).toContainEqual({ id: 'general', name: 'General', private: false, clientCount: 2 });
+		expect(result).toContainEqual({ id: 'private_room', name: 'Private Room', private: true, clientCount: 1 });
 	});
 
 	it('retourne 0 clients si clients est absent ou invalide', async () => {
 		const mockResponse = {
 			data: {
-				'no-clients': {},
-				'null-clients': { clients: null },
-				'string-clients': { clients: 'invalid' }
+				'no-clients': { name: 'No Clients' },
+				'null-clients': { clients: null, name: 'Null Clients' },
+				'string-clients': { clients: 'invalid', name: 'String Clients' }
 			}
 		};
 
@@ -48,6 +48,40 @@ describe('fetchRoomsIndex', () => {
 		const result = await fetchRoomsIndex();
 
 		expect(result.every((r) => r.clientCount === 0)).toBe(true);
+	});
+
+	it('utilise la clé comme nom si name est absent', async () => {
+		const mockResponse = {
+			data: {
+				'my-room': { clients: {} }
+			}
+		};
+
+		(fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve(mockResponse)
+		});
+
+		const result = await fetchRoomsIndex();
+
+		expect(result[0].name).toBe('my-room');
+	});
+
+	it('private est false par défaut si absent', async () => {
+		const mockResponse = {
+			data: {
+				'public-room': { name: 'Public Room', clients: {} }
+			}
+		};
+
+		(fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve(mockResponse)
+		});
+
+		const result = await fetchRoomsIndex();
+
+		expect(result[0].private).toBe(false);
 	});
 
 	it('retourne un tableau vide si data est absent', async () => {

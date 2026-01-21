@@ -132,6 +132,7 @@ Conventions clés :
 ### Lobby ([/reception](src/routes/reception/+page.svelte))
 - **Liste des rooms** : Fetch API externe (`/rooms`) avec nombre de participants
 - **Room personnalisée** : Création dynamique via formulaire
+- **Room protégée** : Lorsqu'une room est marquée privée (visible avec une icône), elle peut être accédée que via mot de passe
 - **Dernière room** : Mémorisation pour reconnexion rapide
 - **Synchronisation** : Merge entre rooms distantes et locales
 

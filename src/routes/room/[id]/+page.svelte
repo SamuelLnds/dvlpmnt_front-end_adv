@@ -381,6 +381,13 @@
 		profilePhotoDataUrl = profile.photoDataUrl ?? null;
 		photos = readPhotos();
 
+		// Récupérer le mot de passe depuis sessionStorage (défini par la page reception)
+		const roomPassword = sessionStorage.getItem(`room.password.${roomId}`);
+		// Nettoyer le mot de passe après récupération (usage unique)
+		if (roomPassword) {
+			sessionStorage.removeItem(`room.password.${roomId}`);
+		}
+
 		void ensureDefaultAvatar();
 
 		// Initialiser Battery via service centralisé
@@ -423,7 +430,15 @@
 				await syncProfileAvatar(mySocketId, pseudo);
 				void ensureAvatarForKey(myRemoteKey);
 
-				socket.emit('chat-join-room', { pseudo, roomName: roomId });
+				// Émettre chat-join-room avec le mot de passe si présent
+				const joinPayload: { pseudo: string; roomName: string; password?: string } = {
+					pseudo,
+					roomName: roomId
+				};
+				if (roomPassword) {
+					joinPayload.password = roomPassword;
+				}
+				socket.emit('chat-join-room', joinPayload);
 			});
 
 			socket.on('disconnect', () => {
