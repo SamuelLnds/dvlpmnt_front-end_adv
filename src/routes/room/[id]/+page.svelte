@@ -580,12 +580,12 @@
 						{#if isOwnMessage}
 							<span class="badge badge--own">Vous</span>
 						{/if}
-						<time class="chat-message__time">
-							{message.dateEmis ? new Date(message.dateEmis).toLocaleTimeString() : ''}
-						</time>
 						{#if message.categorie && message.categorie !== 'MESSAGE'}
 							<span class="badge badge--warning">{message.categorie}</span>
 						{/if}
+						<time class="chat-message__time">
+							{message.dateEmis ? new Date(message.dateEmis).toLocaleTimeString() : ''}
+						</time>
 					</header>
 					{/if}
 
