@@ -29,8 +29,6 @@ export async function fetchRoomsIndex(): Promise<RoomsIndexItem[]> {
 
 	const payload = response.data?.data ?? {};
 
-	console.log('JSON payload rooms:', payload);
-
 	return Object.entries(payload).map(([key, meta]) => ({
 		id: key,
 		name: meta?.name ?? key,

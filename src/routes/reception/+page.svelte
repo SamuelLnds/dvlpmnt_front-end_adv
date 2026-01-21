@@ -9,8 +9,6 @@
 	import PasswordModal from '$lib/components/PasswordModal.svelte';
 	import CreateRoomModal from '$lib/components/CreateRoomModal.svelte';
 	import { formatRoomName } from '$lib/utils/format';
-	import { logRendering } from '$lib/logRendering';
-	import { prerender, ssr, csr } from './+page';
 
 	let userPseudo = '';
 	let rooms: Room[] = [];
@@ -35,9 +33,6 @@
 		userPseudo = profile.pseudo;
 		lastRoom = readLastRoom() || 'general';
 		void loadRooms();
-
-		// Log du render
-		logRendering({ prerender, ssr, csr });
 	});
 
 	async function loadRooms() {

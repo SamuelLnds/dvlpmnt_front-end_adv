@@ -32,6 +32,7 @@ Site en prod : https://samuel.landais.angers.mds-project.fr
     - [Docker](#docker)
     - [Variables d’environnement](#variables-denvironnement)
   - [Clés localStorage](#clés-localstorage)
+  - [Documentation sur le rendering](#documentation-sur-le-rendering)
 
 ## Aperçu
 
@@ -230,3 +231,8 @@ Image : Node.js 24 (Debian Bookworm Slim)
 | `chat.messages.v1` | Historique messages |
 | `camera.photos.v1` | Galerie photos |
 | `app-theme`        | Thème (dark/light) |
+
+## Documentation sur le rendering
+
+- [Rendering – concepts (SSR, CSR, SSG, ISR)](docs/DOC_RENDERING.md)
+- [Rendering – tests et observations](docs/TEST_RENDERING.md)
