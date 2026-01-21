@@ -1,51 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-
-  type BatteryManager = {
-    charging: boolean;
-    level: number; // 0..1
-    addEventListener: (t: string, cb: () => void) => void;
-    removeEventListener: (t: string, cb: () => void) => void;
-  };
+  import { subscribeToBattery } from '$lib/services/battery';
 
   let supported = false;
   let level = 1;
   let charging = false;
-  let bm: BatteryManager | null = null;
-
-  const update = () => {
-    if (!bm) return;
-    level = bm.level;
-    charging = bm.charging;
-  };
 
   onMount(() => {
-    supported = 'getBattery' in navigator && window.isSecureContext;
-    if (!supported) return;
-
-    let active = true;
-
-    (async () => {
-      try {
-        bm = await (navigator as any).getBattery();
-        if (!active || bm === null) return;
-
-        update();
-        bm.addEventListener('levelchange', update);
-        bm.addEventListener('chargingchange', update);
-      } catch (e) {
-        console.error('getBattery() failed:', e);
-        supported = false;
-      }
-    })();
+    const unsubscribe = subscribeToBattery((state) => {
+      supported = state.supported;
+      level = state.level;
+      charging = state.charging;
+    });
 
     // cleanup: retournée par onMount (équivalent onDestroy)
-    return () => {
-      active = false;
-      if (!bm) return;
-      bm.removeEventListener('levelchange', update);
-      bm.removeEventListener('chargingchange', update);
-    };
+    return unsubscribe;
   });
 
   $: percent = Math.round(level * 100);

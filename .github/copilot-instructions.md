@@ -18,6 +18,7 @@ src/
 │   ├── services/     # Services navigateur et temps réel
 │   │   ├── device.ts      # APIs navigateur (vibrate, notifications)
 │   │   ├── socket.ts      # Singleton Socket.IO (getSocket, withSocket, resetSocket)
+│   │   ├── battery.ts     # Service centralisé Battery API (subscribeToBattery, getBatteryState)
 │   │   └── index.ts       # Barrel exports
 │   ├── storage/      # Persistance localStorage
 │   │   ├── profile.ts     # Profil utilisateur + géolocalisation
@@ -223,6 +224,36 @@ async function fetchData() {
 }
 ```
 
+### Battery Service
+
+Service centralisé pour la Battery API (`lib/services/battery.ts`) :
+```typescript
+import { subscribeToBattery, getBatteryState, isBatterySupported } from '$lib/services/battery';
+
+// S'abonner aux mises à jour (pattern observer)
+const unsubscribe = subscribeToBattery((state) => {
+  console.log(`Battery: ${state.percent}% ${state.charging ? '(charging)' : ''}`);
+});
+
+// Obtenir l'état actuel (synchrone)
+const state = getBatteryState();
+// state: { supported: boolean, level: number, charging: boolean, percent: number }
+
+// Vérifier le support
+if (isBatterySupported()) {
+  // API disponible
+}
+
+// Nettoyer (dans onDestroy)
+unsubscribe();
+```
+
+**Avantages** :
+- Initialisation automatique au premier subscribe
+- Pattern observer pour les mises à jour en temps réel
+- Gestion centralisée des listeners (évite les fuites mémoire)
+- État partagé entre tous les composants
+
 ## Imports et Barrel Exports
 
 **Privilégier les barrel exports** pour des imports propres :
@@ -239,7 +270,7 @@ import { getSocket } from '$lib/services/socket';
 
 **Fichiers barrel disponibles** :
 - `$lib/index.ts` : Tous les exports de lib/
-- `$lib/services/index.ts` : device, socket
+- `$lib/services/index.ts` : device, socket, battery
 - `$lib/utils/index.ts` : validation, format, download, merge
 
 ## Commandes npm

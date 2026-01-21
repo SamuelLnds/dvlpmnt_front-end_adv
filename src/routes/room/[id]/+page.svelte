@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { browser } from '$app/environment';
-	import { ChevronDown, Image as ImageIcon, X, Users } from 'lucide-svelte';
+	import { ChevronDown, Image as ImageIcon, X, Users, Battery, MapPin, MoreVertical } from 'lucide-svelte';
 	import type { PageData as OriginalPageData } from './$types';
 	type PageData = OriginalPageData & { roomId: string };
 
 	import { getSocket, resetSocket, withSocket } from '$lib/services/socket';
-	import { readProfile, defaultAvatarDataURL } from '$lib/storage/profile';
+	import { subscribeToBattery } from '$lib/services/battery';
+	import { readProfile, defaultAvatarDataURL, readLocation } from '$lib/storage/profile';
 	import { fetchUserImage, uploadUserImage } from '$lib/api/images';
 	import defaultAvatarUrl from '$lib/assets/default-avatar.png';
 	import { notifyAndVibrate } from '$lib/services/device';
@@ -260,6 +261,45 @@
 
 	const isImageDataUrl = (value: string) => /^data:image\//i.test(value);
 
+	// Battery API via service centralisé
+	let batterySupported = false;
+	let batteryLevel = 1;
+	let batteryCharging = false;
+	let unsubscribeBattery: (() => void) | null = null;
+
+	function shareBattery() {
+		if (!batterySupported) return;
+		const percent = Math.round(batteryLevel * 100);
+		const chargingText = batteryCharging ? ' (en charge ⚡)' : '';
+		const message = `🔋 Batterie : ${percent}%${chargingText}`;
+		emitMessage(message);
+	}
+
+	// Géolocalisation
+	let locationAvailable = false;
+
+	function shareLocation() {
+		if (!locationAvailable) return;
+		const loc = readLocation();
+		if (!loc) return;
+		const parts: string[] = [];
+		if (loc.city) parts.push(loc.city);
+		if (loc.country) parts.push(loc.country);
+		const locationText = parts.length > 0 ? parts.join(', ') : `${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`;
+		emitMessage(`📍 Je suis à : ${locationText}`);
+	}
+
+	// Menu d'actions (responsive)
+	let actionsMenuOpen = false;
+
+	function toggleActionsMenu() {
+		actionsMenuOpen = !actionsMenuOpen;
+	}
+
+	function closeActionsMenu() {
+		actionsMenuOpen = false;
+	}
+
 	let pickerOpen = false;
 	let pickerTab: 'menu' | 'file' | 'gallery' | 'camera' = 'menu';
 	let selectedDataUrl: string | null = null;
@@ -342,6 +382,17 @@
 		photos = readPhotos();
 
 		void ensureDefaultAvatar();
+
+		// Initialiser Battery via service centralisé
+		unsubscribeBattery = subscribeToBattery((state) => {
+			batterySupported = state.supported;
+			batteryLevel = state.level;
+			batteryCharging = state.charging;
+		});
+
+		// Vérifier si la géolocalisation est disponible
+		const loc = readLocation();
+		locationAvailable = loc !== null;
 
 		// Attacher le gestionnaire beforeunload pour déconnecter proprement lors du rechargement
 		window.addEventListener('beforeunload', handleBeforeUnload);
@@ -484,6 +535,11 @@
 		if (!browser) return;
 		// Retirer le gestionnaire beforeunload
 		window.removeEventListener('beforeunload', handleBeforeUnload);
+		// Nettoyage Battery API
+		if (unsubscribeBattery) {
+			unsubscribeBattery();
+			unsubscribeBattery = null;
+		}
 		// Déconnexion du socket
 		const socket = getSocket();
 		socket.removeAllListeners();
@@ -630,14 +686,85 @@
 			/>
 		</label>
 		<div class="chat-composer__actions">
+			<!-- Boutons visibles sur desktop -->
 			<button
 				type="button"
-				class="btn btn--ghost btn--icon"
+				class="btn btn--ghost btn--icon chat-action-desktop"
 				on:click={openPicker}
 				title="Envoyer une image"
 			>
 				<ImageIcon size={20} stroke-width={1.5} aria-hidden="true" />
 			</button>
+			{#if batterySupported}
+				<button
+					type="button"
+					class="btn btn--ghost btn--icon chat-action-desktop"
+					on:click={shareBattery}
+					title="Partager niveau de batterie"
+					disabled={status !== 'connected'}
+				>
+					<Battery size={20} stroke-width={1.5} aria-hidden="true" />
+				</button>
+			{/if}
+			{#if locationAvailable}
+				<button
+					type="button"
+					class="btn btn--ghost btn--icon chat-action-desktop"
+					on:click={shareLocation}
+					title="Partager ma position"
+					disabled={status !== 'connected'}
+				>
+					<MapPin size={20} stroke-width={1.5} aria-hidden="true" />
+				</button>
+			{/if}
+
+			<!-- Menu déroulant sur mobile -->
+			<div class="chat-action-mobile">
+				<button
+					type="button"
+					class="btn btn--ghost btn--icon"
+					on:click={toggleActionsMenu}
+					title="Plus d'actions"
+					aria-expanded={actionsMenuOpen}
+				>
+					<MoreVertical size={20} stroke-width={1.5} aria-hidden="true" />
+				</button>
+				{#if actionsMenuOpen}
+					<div class="chat-actions-dropdown surface" role="menu">
+						<button
+							type="button"
+							class="chat-actions-dropdown__item"
+							on:click={() => { openPicker(); closeActionsMenu(); }}
+						>
+							<ImageIcon size={18} stroke-width={1.5} aria-hidden="true" />
+							<span>Image</span>
+						</button>
+						{#if batterySupported}
+							<button
+								type="button"
+								class="chat-actions-dropdown__item"
+								on:click={() => { shareBattery(); closeActionsMenu(); }}
+								disabled={status !== 'connected'}
+							>
+								<Battery size={18} stroke-width={1.5} aria-hidden="true" />
+								<span>Batterie ({Math.round(batteryLevel * 100)}%)</span>
+							</button>
+						{/if}
+						{#if locationAvailable}
+							<button
+								type="button"
+								class="chat-actions-dropdown__item"
+								on:click={() => { shareLocation(); closeActionsMenu(); }}
+								disabled={status !== 'connected'}
+							>
+								<MapPin size={18} stroke-width={1.5} aria-hidden="true" />
+								<span>Position</span>
+							</button>
+						{/if}
+					</div>
+				{/if}
+			</div>
+
 			<button type="submit" class="btn btn--primary" disabled={status !== 'connected'}>
 				Envoyer
 			</button>
@@ -956,6 +1083,54 @@
 		display: flex;
 		gap: 0.5rem;
 		justify-content: flex-end;
+		align-items: center;
+	}
+
+	/* Boutons d'actions desktop/mobile */
+	.chat-action-desktop {
+		display: flex;
+	}
+
+	.chat-action-mobile {
+		display: none;
+		position: relative;
+	}
+
+	/* Menu dropdown mobile */
+	.chat-actions-dropdown {
+		position: absolute;
+		bottom: 100%;
+		right: 0;
+		min-width: 160px;
+		margin-bottom: 0.5rem;
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-lg);
+		z-index: 70;
+		overflow: hidden;
+	}
+
+	.chat-actions-dropdown__item {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		width: 100%;
+		padding: 0.65rem 0.85rem;
+		border: none;
+		background: transparent;
+		color: var(--color-text);
+		font-size: 0.9rem;
+		cursor: pointer;
+		text-align: left;
+		transition: background 0.15s;
+	}
+
+	.chat-actions-dropdown__item:hover:not(:disabled) {
+		background: var(--color-bg-muted);
+	}
+
+	.chat-actions-dropdown__item:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.chat-picker {
@@ -1024,6 +1199,15 @@
 		.chat-composer__actions {
 			flex-wrap: wrap;
 			justify-content: flex-end;
+		}
+
+		/* Sur mobile/tablette : cacher boutons desktop, afficher menu */
+		.chat-action-desktop {
+			display: none;
+		}
+
+		.chat-action-mobile {
+			display: block;
 		}
 	}
 
